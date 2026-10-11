@@ -10,9 +10,15 @@ public class CreateSensorDataRequest
     /// <summary>Physical device identifier (must match the owner of the X-Device-Key).</summary>
     /// <example>ESP32-A1B2C3</example>
     public string DeviceId { get; set; } = "";
-    /// <summary>UTC time of measurement (ISO-8601). Defaults to server time if omitted. (DeviceId, RecordedAt) uniquely identifies a reading; resubmitting it returns 409.</summary>
-    /// <example>2026-10-11T08:30:00Z</example>
+    /// <summary>Time of measurement exactly as the device sends it (the ESP32 sends IST wall-clock, e.g. 2026-10-11T14:00:00); stored as given. Defaults to current IST if omitted. (DeviceId, RecordedAt) uniquely identifies a reading; resubmitting it returns 409.</summary>
+    /// <example>2026-10-11T14:00:00</example>
     public DateTime? RecordedAt { get; set; }
+    /// <summary>Date of measurement as sent by the device (yyyy-MM-dd). Stored as given; defaults to the date part of RecordedAt.</summary>
+    /// <example>2026-10-11</example>
+    public DateOnly? DataDate { get; set; }
+    /// <summary>Time of measurement as sent by the device (HH:mm:ss). Stored as given; defaults to the time part of RecordedAt.</summary>
+    /// <example>14:00:00</example>
+    public TimeOnly? DataTime { get; set; }
     /// <example>87</example>
     public int? Aqi { get; set; }
     /// <example>Moderate</example>

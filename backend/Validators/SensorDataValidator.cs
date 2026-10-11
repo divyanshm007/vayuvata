@@ -8,9 +8,10 @@ public class CreateSensorDataValidator : AbstractValidator<CreateSensorDataReque
     public CreateSensorDataValidator()
     {
         RuleFor(x => x.DeviceId).NotEmpty().MaximumLength(64);
-        RuleFor(x => x.RecordedAt).Must(t => t == null || t.Value.ToUniversalTime() <= DateTime.UtcNow.AddMinutes(5))
+        // The device sends IST wall-clock time stored as-is, so "future" allows up to IST (UTC+5:30) plus a margin.
+        RuleFor(x => x.RecordedAt).Must(t => t == null || t.Value <= DateTime.UtcNow.AddHours(6))
             .WithMessage("RecordedAt cannot be in the future.")
-            .Must(t => t == null || t.Value.ToUniversalTime() >= new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc))
+            .Must(t => t == null || t.Value >= new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc))
             .WithMessage("RecordedAt is implausibly old.");
         RuleFor(x => x.Aqi).InclusiveBetween(0, 1000);
         RuleFor(x => x.AqiStatus).MaximumLength(32);

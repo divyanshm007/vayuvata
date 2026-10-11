@@ -39,9 +39,9 @@ public class SensorDataService(
         }
         if (!device.IsActive) throw ApiException.Forbidden("Device is inactive.");
 
-        var recorded = req.RecordedAt is { } r
-            ? (r.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(r, DateTimeKind.Utc) : r.ToUniversalTime())
-            : DateTime.UtcNow;
+        // RecordedAt, DataDate and DataTime are stored exactly as the device sends them (the ESP32 sends IST
+        // wall-clock time). CreatedAt is the SQL server's own clock. No timezone conversion is applied here.
+        var recorded = req.RecordedAt is { } r ? r : DateTime.UtcNow.AddMinutes(330);
         recorded = new DateTime(recorded.Ticks - recorded.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc);
 
         if (await db.SensorData.AnyAsync(s => s.DeviceCode == device.DeviceId && s.RecordedAt == recorded, ct))
@@ -51,8 +51,8 @@ public class SensorDataService(
         {
             DeviceCode = device.DeviceId,
             RecordedAt = recorded,
-            DataDate = DateOnly.FromDateTime(recorded),
-            DataTime = TimeOnly.FromDateTime(recorded),
+            DataDate = req.DataDate ?? DateOnly.FromDateTime(recorded),
+            DataTime = req.DataTime ?? TimeOnly.FromDateTime(recorded),
             Aqi = req.Aqi, AqiStatus = req.AqiStatus?.Trim(),
             Pm10 = req.Pm10, Pm25 = req.Pm25, No2Ppm = req.No2Ppm, So2Ppm = req.So2Ppm, CoPpm = req.CoPpm,
             TvocPpb = req.TvocPpb, Humidity = req.Humidity, Temperature = req.Temperature,
@@ -71,8 +71,12 @@ public class SensorDataService(
     {
         if (string.IsNullOrEmpty(provided)) return devModeAllowsMissingKey;
         if (device.ApiKeyHash is null) return false;
-        return CryptographicOperations.FixedTimeEquals(
-            Encoding.ASCII.GetBytes(JwtService.Hash(provided)), Encoding.ASCII.GetBytes(device.ApiKeyHash));
+        var stored = Encoding.ASCII.GetBytes(device.ApiKeyHash);
+        // Simple match against SQL: the ESP is flashed with the device's ApiKeyHash exactly as stored in
+        // dbo.Devices, so the header value is compared to it directly. The original raw key (the one returned
+        // when the device was registered) is still accepted too, by hashing it first.
+        return CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(provided.Trim().ToLowerInvariant()), stored)
+            || CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(JwtService.Hash(provided)), stored);
     }
 
     public Task<PagedResult<SensorDataDto>> QueryAsync(SensorDataQuery q, CurrentUser caller, CancellationToken ct)
