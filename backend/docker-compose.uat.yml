@@ -1,0 +1,66 @@
+# VayuVata UAT stack: API + its own SQL Server. Self-contained; it does not touch any other server or database.
+#
+#   cp .env.uat.example .env.uat      # fill in the secrets (never commit .env.uat)
+#   docker compose --env-file .env.uat -f docker-compose.uat.yml up -d --build
+#   docker compose --env-file .env.uat -f docker-compose.uat.yml ps
+#
+# API:     http://<uat-host>:${API_PORT}        Swagger: http://<uat-host>:${API_PORT}/swagger   Health: /api/v1/health
+# SQL Server is NOT published to the host; only the API container can reach it.
+
+name: vayuvata-uat
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${SA_PASSWORD:?set SA_PASSWORD in .env.uat}
+    volumes:
+      - vayuvata-sqldata:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' -b -o /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [vayuvata]
+
+  api:
+    build:
+      context: .
+    image: vayuvata-api:uat
+    restart: unless-stopped
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    ports:
+      - "${API_PORT:-8081}:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Staging
+      ConnectionStrings__Default: "Server=sqlserver,1433;Database=VayuVata;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;Encrypt=True;"
+      Jwt__Key: ${JWT_KEY:?set JWT_KEY (>= 32 chars) in .env.uat}
+      Bootstrap__SuperAdminEmail: ${SUPERADMIN_EMAIL:?set SUPERADMIN_EMAIL in .env.uat}
+      Bootstrap__SuperAdminPassword: ${SUPERADMIN_PASSWORD:?set SUPERADMIN_PASSWORD in .env.uat}
+      Bootstrap__SuperAdminName: Super Admin
+      # UAT: create/upgrade the schema from EF migrations on start (idempotent). Use SQL scripts / a deploy step for production.
+      Database__ApplyMigrationsOnStartup: "true"
+      Swagger__Enabled: ${SWAGGER_ENABLED:-true}
+      Cors__AllowedOrigins__0: ${CORS_ORIGIN:-http://localhost:3000}
+      RateLimiting__LoginPermitLimit: "10"
+      Https__Redirect: "false"          # TLS terminates at the UAT reverse proxy / load balancer
+    healthcheck:
+      # The aspnet image has no curl; use bash's /dev/tcp.
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /api/v1/health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200 '"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    networks: [vayuvata]
+
+volumes:
+  vayuvata-sqldata:
+
+networks:
+  vayuvata:

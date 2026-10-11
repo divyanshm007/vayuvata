@@ -1,0 +1,206 @@
+# VayuVata Backend
+
+ASP.NET Core Web API (.NET 10) + SQL Server for air-quality monitoring. **One project, one folder** — controllers, models, DTOs, EF Core, services, auth and validators all live in this directory (exactly one `.csproj`).
+
+## Roles
+
+| Role | Can do |
+|---|---|
+| `SuperAdmin` | Everything: create Admins/Users, assign Users to Admins, register devices, assign any device, see all data |
+| `Admin` | Create/manage **own** Users (`ManagerId` = their id), assign devices to own Users, see data of devices assigned to own Users. Cannot touch standalone Users or other Admins' Users |
+| `User` | See own profile, own assigned devices and their readings |
+
+A *standalone user* is a regular `User` managed directly by the SuperAdmin: `ManagerId` = the SuperAdmin's id. There is no tenant/organization layer.
+
+## Quick start (development)
+
+Prerequisites: .NET 10 SDK, SQL Server (default instance `localhost`, Windows auth), `dotnet-ef` tool.
+
+```bash
+cd VayuVata/backend
+# Secrets live in user-secrets / environment variables, never in source control.
+dotnet user-secrets set "Jwt:Key" "<random string, >= 32 chars>"
+dotnet user-secrets set "Bootstrap:SuperAdminEmail" "you@example.com"
+dotnet user-secrets set "Bootstrap:SuperAdminPassword" "<strong password, >= 10 chars>"
+dotnet run --launch-profile http          # http://localhost:5080/swagger
+```
+
+In `Development` the app applies EF migrations on startup (`Database:ApplyMigrationsOnStartup`) and creates the bootstrap SuperAdmin if no SuperAdmin exists. Then log in via `POST /api/v1/auth/login`.
+
+## Manager hierarchy (`Users.ManagerId`)
+
+| Account | Role | ManagerId |
+|---|---|---|
+| System Super Admin | SuperAdmin | NULL |
+| Rahul | Admin | NULL |
+| Amit, Priya | User | the Admin's id (Admin-managed) |
+| Neha | User | the **SuperAdmin's id** (standalone) |
+
+Ids always come from the database. `ManagerId` replaced `AdminId` (migration `ManagerHierarchy`: add column, copy `AdminId` -> `ManagerId`, verify, then drop the old column; reversible; it refuses to run and names the ids if a legacy standalone User with no manager exists, so no manager is ever guessed). Database rules: `CK_Users_Manager` (SuperAdmin/Admin have no manager, a User always has one and never itself), trigger `TR_Users_ManagerRules` (a manager must be an Admin or SuperAdmin; managers cannot be demoted while they manage Users), FK `FK_Users_Users_ManagerId`. Because managers never have a manager, cycles are impossible. The service additionally requires the Admin manager to be **active**.
+
+| Endpoint | Who | Notes |
+|---|---|---|
+| `POST /users` | SuperAdmin, Admin | SuperAdmin: `role: Admin` (no manager); `role: User` without `managerId` = standalone (manager = caller); with `managerId` = active Admin. Admin: always manager = caller (another `managerId` -> 403) |
+| `GET /admins/{adminId}/users` | SuperAdmin (any Admin), Admin (own id only) | paged, `{adminId, adminName, totalCount, page, pageSize, items}`; another Admin -> 403 |
+| `POST /admins/{adminId}/users` | SuperAdmin (active Admin), Admin (own id only) | body `{name,email,password}`; same creation service as `POST /users` |
+| `GET /superadmin/users` | SuperAdmin | Users with `ManagerId` = the authenticated SuperAdmin; `search`, paging; `managerRole`, `assignmentType: Standalone` |
+| `PATCH /users/{id}/admin-assignment` | SuperAdmin | body `{managerId}` (required): active Admin id = assign to that Admin; SuperAdmin's own id = standalone. `null` is rejected. Logged as an `AUDIT manager change` line. Devices, assignments and sensor history are preserved |
+| `GET /users` | SuperAdmin, Admin | SuperAdmin filters: `role`, `managerId`, `standalone`, `isActive`, `search`. Admin: own Users only; `managerId` other than their own or `standalone` -> 403 |
+
+Moving a User to another manager changes who can see that User's devices and readings (visibility is resolved through `User.ManagerId`), never the data itself.
+
+## Configuration
+
+Keys are in `appsettings.json`; override with environment variables (`__` = `:`). See `.env.example`.
+
+| Key | Purpose |
+|---|---|
+| `ConnectionStrings:Default` | SQL Server connection (default: `Server=localhost;Database=VayuVata;Trusted_Connection=True;TrustServerCertificate=True;`) |
+| `Jwt:Key` | **Required**, ≥ 32 chars. App refuses to start without it |
+| `Jwt:Issuer/Audience/AccessTokenMinutes/RefreshTokenDays` | Token settings (15 min / 7 days) |
+| `Bootstrap:SuperAdminEmail/Password/Name` | First SuperAdmin (only used while no SuperAdmin exists) |
+| `Swagger:Enabled` | Swagger UI at `/swagger` (on in Development, **off** by default) |
+| `Database:ApplyMigrationsOnStartup` | Auto-migrate (on in Development; off elsewhere) |
+| `Cors:AllowedOrigins` | Allowed browser origins (empty = no CORS) |
+| `RateLimiting:LoginPermitLimit` | Login/refresh attempts per IP per minute (default 10) |
+| `Https:Redirect` | Enable HTTPS redirection |
+| `DeviceAuth:AllowMissingKeyInDevelopment` | Dev-only: registered active devices may post without `X-Device-Key`. Ignored outside `Development` |
+
+## Database
+
+Name: `VayuVata`. Tables: `Users`, `Devices`, `DeviceAssignments`, `SensorData`, `RefreshTokens` (+ `__EFMigrationsHistory`).
+
+**Option A – EF migrations (recommended)**
+```bash
+dotnet ef database update          # creates the database if needed and applies Migrations/
+dotnet ef migrations add <Name> -o Migrations   # after model changes
+```
+
+**Option B – SQL scripts** (`Database/`, same schema as the migrations, verified identical by the test suite)
+```bash
+sqlcmd -S localhost -E -C -i Database/CreateDatabase.sql
+sqlcmd -S localhost -E -C -I -d VayuVata -i Database/CreateTables.sql
+sqlcmd -S localhost -E -C -I -d VayuVata -i Database/CreateIndexes.sql
+sqlcmd -S localhost -E -C -d VayuVata -i Database/SeedSuperAdmin.sql -v Email="you@example.com" Name="Super Admin" PasswordHash="<bcrypt>"
+```
+Use `-I` (QUOTED_IDENTIFIER ON): SQL Server requires it for tables with filtered indexes. Use one option per database, not both.
+
+**Reset** (`Database/ResetDatabase.sql`) is destructive and refuses to run unless you pass `Confirm=YES_DROP_VAYUVATA`; it first takes a `BACKUP … WITH CHECKSUM`, runs `RESTORE VERIFYONLY`, and only then drops:
+```bash
+sqlcmd -S localhost -E -C -i Database/ResetDatabase.sql -v Confirm="YES_DROP_VAYUVATA" BackupPath="D:\Backups\VayuVata_pre_reset.bak"
+```
+
+### Key constraints
+- `Users.Email` unique; `CK_Users_Role`; `CK_Users_Manager` + trigger `TR_Users_ManagerRules` (only a `User` has a `ManagerId`, always an Admin or SuperAdmin, never itself).
+- `Devices.DeviceId` (physical ESP32 id) unique and distinct from `Devices.Id`.
+- `UX_DeviceAssignments_ActiveDevice`: **filtered unique index** `WHERE IsActive = 1` → a device has at most one active assignment, even under concurrent requests.
+- `SensorData.device_id` → FK to `Devices.DeviceId`; indexes on `device_id`, `recorded_at`, and unique `(device_id, recorded_at)`.
+
+## Sensor-data contract (ESP32)
+
+No firmware/payload definition existed in the repository, so this contract was defined here. **Please confirm it matches the firmware** — only the field naming/units are assumptions.
+
+- `SensorData` keeps the exact column names requested (`ID`, `device_id`, `data_date`, `data_time`, `recorded_at`, `aqi`, `aqi_status`, `pm10`, `pm25`, `no2_ppm`, `so2_ppm`, `co_ppm`, `tvoc_ppb`, `humidity`, `temperature`, `outer_temperature`, `outer_humidity`, `created_at`); C# properties are mapped explicitly.
+- Types: `aqi int`, `pm10/pm25 decimal(8,2)`, `no2/so2/co_ppm decimal(10,4)`, `tvoc_ppb decimal(10,2)`, `humidity/outer_humidity decimal(5,2)`, `temperature/outer_temperature decimal(6,2)`. All measurements are **nullable**; omitted values stay `NULL` (never 0).
+- **Timestamps are all UTC.** `recorded_at` = device measurement time (ISO-8601, optional; server time if omitted). `data_date`/`data_time` are the UTC date/time parts of `recorded_at`, computed by the server. `created_at` is `SYSUTCDATETIME()` from SQL Server. API responses carry an explicit `Z`.
+- **Duplicate prevention:** `(device_id, recorded_at)` is the reading identity (unique index). A resubmission returns `409 duplicate_reading`. Devices should therefore send a stable `recordedAt` (millisecond precision) and may safely retry.
+- Validation ranges: aqi 0–1000, pm 0–10000, humidity 0–100, temperature −60…150, etc.; `recordedAt` may not be >5 min in the future.
+
+### Device credentials
+`POST /api/v1/sensor-data` is authenticated with a **per-device API key** in the `X-Device-Key` header — never a user JWT.
+
+- **Provisioning:** `POST /api/v1/devices` (SuperAdmin) returns `apiKey` (`vv_…`) **once**. Flash it into the ESP32. Only its SHA-256 hash is stored (`Devices.ApiKeyHash`); it cannot be recovered.
+- **Rotation:** `POST /api/v1/devices/{id}/rotate-key` (SuperAdmin) issues a new key; the old key stops working immediately. Re-flash the device.
+- Unknown device or bad/missing key → `401` (same answer, no device enumeration); inactive device → `403`.
+- **Development-only mode:** `DeviceAuth__AllowMissingKeyInDevelopment=true` lets a *registered, active* device post without a key, only when `ASPNETCORE_ENVIRONMENT=Development`. Off by default; ignored in any other environment.
+
+Example:
+```bash
+curl -X POST http://localhost:5080/api/v1/sensor-data -H "Content-Type: application/json" -H "X-Device-Key: vv_..." \
+  -d '{"deviceId":"ESP32-A1B2C3","recordedAt":"2026-10-11T08:30:00Z","aqi":87,"pm25":22.5,"humidity":55.3}'
+```
+
+## Endpoints (`/api/v1`)
+
+| Area | Endpoint | Access |
+|---|---|---|
+| Auth | `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me` | public / any role |
+| Users | `POST /users`, `GET /users`, `GET /users/{id}`, `PUT /users/{id}`, `PATCH /users/{id}/status`, `POST /users/{id}/reset-password`, `GET /users/{id}/devices` | SuperAdmin, Admin (own scope); `GET {id}` and `{id}/devices` also for the user themself |
+| Users | `PATCH /users/{id}/admin-assignment` | SuperAdmin only (body `{managerId}`) |
+| Users | `GET /admins/{adminId}/users`, `POST /admins/{adminId}/users` | SuperAdmin; Admin for own id |
+| Users | `GET /superadmin/users` | SuperAdmin only |
+| Devices | `POST /devices`, `PUT /devices/{id}`, `PATCH /devices/{id}/status`, `POST /devices/{id}/rotate-key` | SuperAdmin only |
+| Devices | `GET /devices`, `GET /devices/{id}` | scoped by role |
+| Devices | `POST /devices/{id}/assign`, `POST /devices/{id}/unassign`, `GET /devices/{id}/assignments` | SuperAdmin, Admin (scope) |
+| Sensor | `POST /sensor-data` | device key (`X-Device-Key`) |
+| Sensor | `GET /sensor-data`, `GET /sensor-data/{id}`, `GET /devices/{id}/sensor-data/latest`, `GET /devices/{id}/sensor-data/history` | scoped by role |
+| Ops | `GET /health` | public (200 / 503) |
+
+Swagger documents every endpoint, DTO schema, example values and status codes; use **Authorize** and paste the `accessToken` from `/auth/login`. The ESP32 header `X-Device-Key` is shown on `POST /sensor-data`.
+
+### Behaviour worth knowing
+- **Auth model:** access JWT (15 min, claims `sub`, `role`, `email`, `name`) + single-use rotating refresh token (7 days, stored as SHA-256). Logout revokes the refresh token; the short-lived access token expires on its own. Every request re-checks that the account still exists, is active and still has the role in the token (deactivated users get `401` immediately). Role always comes from the token/DB, never from a request body.
+- **Scoping is enforced inside the SQL queries** (`Authorization/ScopeAuthorizationHandler.cs` → `ScopeFilters`). Out-of-scope ids return `404` (not `403`) to avoid confirming that they exist.
+- **Admin device scope:** there is no device-ownership table, so an Admin can assign devices that are *unassigned* or *currently assigned to one of their own Users*, and only to their own Users. Admins can see unassigned devices (the pool they assign from) but never devices assigned to anyone else's Users. SuperAdmin may restrict this further by controlling which devices stay unassigned.
+- **Sensor access follows the *current* assignment:** after reassignment the new owner sees the device's full history and the previous owner no longer sees it. No readings or assignments are ever deleted.
+- Roles are immutable after creation (`PUT /users/{id}` edits name/email only). `SuperAdmin` accounts cannot be created through the API (only bootstrap). The last active SuperAdmin cannot be deactivated (`409 last_superadmin`); nobody can deactivate themself.
+- Deactivating a user revokes their refresh tokens. It does **not** auto-unassign their devices.
+- Errors share one shape: `{ "status", "code", "message", "errors"?, "traceId" }` for validation, malformed JSON/query values, unknown routes (404) and unsupported media types (415). Unhandled errors return a generic 500 (details only in logs).
+- If SQL Server is unreachable at startup the API still starts and `GET /api/v1/health` returns **503** until the database is back (no crash loop).
+- Swagger shows Bearer only on protected operations; `POST /sensor-data` is secured by the separate `DeviceKey` (`X-Device-Key`) scheme.
+- Passwords: BCrypt; policy ≥ 10 chars with upper, lower, digit. Login/refresh are rate limited per IP (`429`).
+
+## Testing
+
+`Tests/` contains `ApiTest.http` (manual requests), `TestCases.md` (scenarios), `Verify.sql` (SQL checks), `Run-ApiTests.ps1` (automated) and `TestResults.md` (output of the last real run).
+
+```powershell
+pwsh ./Tests/Run-ApiTests.ps1      # PowerShell 7+, needs SQL Server + sqlcmd
+```
+The script builds into `Tests/.run/bin` (so it works while the backend is running), starts a second instance on port 5099 against the same `VayuVata` database (using the existing SuperAdmin from user-secrets), runs every scenario and rewrites `TestResults.md`. Nothing is dropped: every test record is tagged (`@vvtest.local` e-mails, `VVTEST-` device ids) and only those rows are removed before and after the run, in one SQL transaction; the schema, migrations and SuperAdmin are preserved. Identity counters are not reset. The SQL-script parity check uses scratch tables in `tempdb`.
+
+## Deployment notes
+- Set `ASPNETCORE_ENVIRONMENT=Production`; provide `Jwt__Key`, `ConnectionStrings__Default`, `Cors__AllowedOrigins__0=…` via secrets/env. Leave `Swagger__Enabled=false` unless you want it exposed. Run `dotnet ef database update` (or the SQL scripts) as a deployment step rather than relying on auto-migration.
+- Terminate TLS at a reverse proxy or Kestrel and set `Https__Redirect=true`; HSTS is enabled outside Development.
+- Use a SQL login/managed identity instead of `Trusted_Connection` for remote servers, and a valid certificate instead of `TrustServerCertificate=True`.
+- `GET /api/v1/health` is suitable for load-balancer probes.
+
+## Project layout
+```
+Controllers/  Models/  DTOs/{Auth,Users,Devices,SensorData}/  Data/(Configurations)  Services/
+Middleware/   Authorization/  Validators/  Helpers/  Migrations/  Database/  Tests/  Properties/
+```
+
+
+
+## Docker / UAT
+
+`Dockerfile` (multi-stage, .NET 10, non-root) and `docker-compose.uat.yml` run the API with **its own SQL Server container**; nothing else is touched.
+
+```bash
+cp .env.uat.example .env.uat         # fill in SA_PASSWORD, JWT_KEY, SUPERADMIN_*; never commit .env.uat
+docker compose --env-file .env.uat -f docker-compose.uat.yml up -d --build
+docker compose --env-file .env.uat -f docker-compose.uat.yml ps          # api + sqlserver should be "healthy"
+curl http://localhost:8081/api/v1/health
+```
+
+- API: `http://<host>:${API_PORT:-8081}`, Swagger at `/swagger` (`SWAGGER_ENABLED`), environment `Staging`.
+- SQL Server is not published to the host. Data lives in the `vayuvata-sqldata` volume; `docker compose ... down` keeps it, `down -v` deletes it.
+- On start the API applies EF migrations and bootstraps the SuperAdmin (UAT only; for production run migrations as a deploy step).
+- TLS is expected to terminate at your UAT reverse proxy / load balancer (`Https__Redirect=false`). Do not expose the container directly to the internet without one.
+- To ship the image to a UAT host without a registry: `docker save vayuvata-api:uat | gzip > vayuvata-api-uat.tar.gz` -> copy -> `docker load`.
+
+## UAT deployment on a shared server (non-Docker)
+
+Used for `72.61.170.214` (production keeps running there, untouched). Self-contained `linux-x64` publish, no .NET install needed on the server.
+
+- App: `/opt/vayuvata-uat/app` (root-owned, not writable by others), service `vayuvata-uat` running as the system user `vayuvata-uat`, hardened systemd unit with memory/CPU/IO caps and a high OOM score so UAT is stopped before production under pressure.
+- Config and secrets: `/opt/vayuvata-uat/secrets/` (root-only, mode 600): `uat.env`, `mssql-sa.pass`, `db-login.pass`, `jwt.key`, `uat-superadmin.pass`, and one `<DeviceId>.key` per registered device.
+- Database: its own SQL Server 2025 Developer instance bound to `127.0.0.1:1433`, database `VayuVata`, limited login `vayuvata_uat` (db_owner of that database only). Never reachable from outside.
+- Listeners: private HTTP `127.0.0.1:5080` (full API + Swagger; use an SSH tunnel: `ssh -L 5080:127.0.0.1:5080 root@<server>`), public HTTPS `0.0.0.0:5443` where `PublicListenerGuard` serves ONLY `POST /api/v1/sensor-data` and answers everything else with an empty 404. Public requests are limited to 16 KB and `RateLimiting:IngestPermitPerMinute` per client IP.
+- TLS: self-signed RSA-2048 certificate with the server IP as SAN, TLS 1.2/1.3 only. Pin it on the device (certificate or SPKI hash); never disable validation. Fingerprints are in `/opt/vayuvata-uat/certs/fingerprint.txt`.
+- Run the automated suite against UAT with the `VV_*` environment variables documented at the top of `Tests/Run-ApiTests.ps1` (SQL login through an SSH tunnel to port 1433).
+- Known behaviour: a request body over 16 KB is rejected with 400 (not 413).
+
+### UAT: public Swagger / full API on port 5081 (added on request)
+HTTPS `0.0.0.0:5081` (same pinned self-signed certificate) serves the **full API and Swagger** to anyone on the internet (no `PublicListenerGuard` on this port; only port 5443 is restricted to sensor ingestion). Open `https://72.61.170.214:5081/swagger`, accept the self-signed certificate warning, then Authorize with a JWT from `POST /api/v1/auth/login`. Login is rate limited (10/min per IP). To close it again: `ufw delete allow 5081/tcp`, remove the three `Kestrel__Endpoints__Admin__*` lines from `/opt/vayuvata-uat/secrets/uat.env` (a backup of the previous file is `uat.env.bak-before-5081`), and `systemctl restart vayuvata-uat`.

@@ -1,0 +1,9 @@
+bin/
+obj/
+.vs/
+*.user
+.env
+appsettings.Local.json
+Tests/.run/
+.env.uat
+*.bak

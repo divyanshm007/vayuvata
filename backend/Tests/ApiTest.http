@@ -1,0 +1,164 @@
+### VayuVata manual API requests (VS Code REST Client / Rider / Visual Studio .http).
+### Start the API first: dotnet run --launch-profile http
+### Fill in credentials below. Do NOT commit real passwords.
+
+@host = http://localhost:5080
+@saEmail = you@example.com
+@saPassword = <bootstrap SuperAdmin password>
+
+### 1. Login as SuperAdmin
+# @name login
+POST {{host}}/api/v1/auth/login
+Content-Type: application/json
+
+{ "email": "{{saEmail}}", "password": "{{saPassword}}" }
+
+###
+@token = {{login.response.body.accessToken}}
+@refresh = {{login.response.body.refreshToken}}
+
+### 2. Profile
+GET {{host}}/api/v1/auth/me
+Authorization: Bearer {{token}}
+
+### 3. Create an Admin
+# @name createAdmin
+POST {{host}}/api/v1/users
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "name": "Admin One", "email": "admin1@example.com", "password": "StrongPass123", "role": "Admin" }
+
+###
+@adminId = {{createAdmin.response.body.id}}
+
+### 4. Create a User under that Admin
+# @name createUser
+POST {{host}}/api/v1/users
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "name": "Asha Verma", "email": "asha@example.com", "password": "StrongPass123", "role": "User", "adminId": {{adminId}} }
+
+###
+@userId = {{createUser.response.body.id}}
+
+### 5. Create a standalone User (no adminId)
+POST {{host}}/api/v1/users
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "name": "Solo User", "email": "solo@example.com", "password": "StrongPass123", "role": "User" }
+
+### 6. List users (paged)
+GET {{host}}/api/v1/users?page=1&pageSize=20
+Authorization: Bearer {{token}}
+
+### 7. Make a user standalone / move to an Admin (SuperAdmin only)
+PATCH {{host}}/api/v1/users/{{userId}}/admin-assignment
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "adminId": null }
+
+### 8. Deactivate / reactivate
+PATCH {{host}}/api/v1/users/{{userId}}/status
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "isActive": true }
+
+### 9. Reset password
+POST {{host}}/api/v1/users/{{userId}}/reset-password
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "newPassword": "NewStrongPass456" }
+
+### 10. Register a device  (response contains apiKey ONCE)
+# @name createDevice
+POST {{host}}/api/v1/devices
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "deviceId": "ESP32-A1B2C3", "deviceName": "Living room monitor", "description": "Second floor" }
+
+###
+@deviceRecordId = {{createDevice.response.body.id}}
+@deviceKey = {{createDevice.response.body.apiKey}}
+
+### 11. Assign (or reassign) the device
+POST {{host}}/api/v1/devices/{{deviceRecordId}}/assign
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "userId": {{userId}}, "notes": "Installed" }
+
+### 12. Assignment history
+GET {{host}}/api/v1/devices/{{deviceRecordId}}/assignments
+Authorization: Bearer {{token}}
+
+### 13. Unassign
+POST {{host}}/api/v1/devices/{{deviceRecordId}}/unassign
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "notes": "Removed" }
+
+### 14. Devices of a user
+GET {{host}}/api/v1/users/{{userId}}/devices
+Authorization: Bearer {{token}}
+
+### 15. ESP32 ingestion (device key, NOT a JWT)
+POST {{host}}/api/v1/sensor-data
+X-Device-Key: {{deviceKey}}
+Content-Type: application/json
+
+{
+  "deviceId": "ESP32-A1B2C3",
+  "recordedAt": "2026-10-11T08:30:00Z",
+  "aqi": 87, "aqiStatus": "Moderate",
+  "pm10": 45.2, "pm25": 22.5,
+  "no2Ppm": 0.021, "so2Ppm": 0.004, "coPpm": 1.2, "tvocPpb": 180,
+  "humidity": 55.3, "temperature": 26.8,
+  "outerTemperature": 31.4, "outerHumidity": 48.0
+}
+
+### 16. Partial reading: omitted measurements stay NULL
+POST {{host}}/api/v1/sensor-data
+X-Device-Key: {{deviceKey}}
+Content-Type: application/json
+
+{ "deviceId": "ESP32-A1B2C3", "recordedAt": "2026-10-11T08:35:00Z", "aqi": 90 }
+
+### 17. Query readings (filters, sort, paging)
+GET {{host}}/api/v1/sensor-data?deviceId=ESP32-A1B2C3&from=2026-10-11T00:00:00Z&to=2026-10-12T00:00:00Z&sortBy=recordedAt&sortDir=desc&page=1&pageSize=50
+Authorization: Bearer {{token}}
+
+### 18. Latest + history of a device
+GET {{host}}/api/v1/devices/{{deviceRecordId}}/sensor-data/latest
+Authorization: Bearer {{token}}
+
+###
+GET {{host}}/api/v1/devices/{{deviceRecordId}}/sensor-data/history?from=2026-10-11T00:00:00Z&pageSize=100
+Authorization: Bearer {{token}}
+
+### 19. Rotate the device key (old key stops working)
+POST {{host}}/api/v1/devices/{{deviceRecordId}}/rotate-key
+Authorization: Bearer {{token}}
+
+### 20. Refresh + logout
+POST {{host}}/api/v1/auth/refresh
+Content-Type: application/json
+
+{ "refreshToken": "{{refresh}}" }
+
+###
+POST {{host}}/api/v1/auth/logout
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "refreshToken": "{{refresh}}" }
+
+### 21. Health
+GET {{host}}/api/v1/health
