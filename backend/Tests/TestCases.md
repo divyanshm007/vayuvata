@@ -153,3 +153,27 @@ IDs match `Run-ApiTests.ps1` and `TestResults.md`. "Auto" = executed by the scri
 | P07 | Ingest is rate limited per client IP (limit 3/min in a dedicated instance) | 401 x3 then 429 |
 
 UAT mode (`VV_*` environment variables, SQL login over an SSH tunnel, safety assertion on SQL Server major version and server name) ran the full suite, including P-series, against the UAT SQL Server 2025 instance: 209 passed, 0 failed.
+
+
+## Stage B additions (P1 API quality, P2 authentication, P3 database)
+
+Run with `Tests/Run-ApiTests.ps1` (UAT mode needs `VV_SQL_USER` = migration login, `VV_APP_USER` = restricted runtime login the API runs as).
+The script first runs the explicit `--migration-status` / `--migrate` commands, then starts the API with the runtime login only.
+
+| ID | Scenario |
+|---|---|
+| M01-M07 | Explicit migration command, idempotent re-run, start-up does not migrate (legacy flag ignored + warning), production/wrong-DB/no-login guards (exit 2), active sessions survive migration, new columns present, history row |
+| G01-G05 | Runtime login: not db_owner/ddladmin/sysadmin; CREATE/ALTER/DROP INDEX/CREATE TRIGGER denied; DELETE denied on Users/Devices/DeviceAssignments/SensorData; SELECT/UPDATE and DELETE on RefreshTokens allowed; the API really runs with that login |
+| X01-X02 | Duplicate index IX_Devices_DeviceId gone; AK_Devices_DeviceId + FK remain; DeviceId uniqueness and sensor-data FK still enforced by the database |
+| T01-T04 | Refresh-token cleanup: expired > 30 days removed (two batches), active / revoked-unexpired / recently-expired kept, pre-existing sessions untouched, logged |
+| L01-L09 | Lockout: 5 failures lock (correct password refused), temporary (~15 min), indistinguishable 401s (unknown / wrong / locked / disabled), no extension while locked, expiry recovery, counter reset, admin reset recovery, concurrent attempts atomic, SuperAdmin never failed |
+| R01-R09 | Refresh: rotation chain, families, reuse revokes the family, other login unaffected, DB state, concurrent refresh = exactly one success, expired token, logout-revoked token, SECURITY log line without token value |
+| C01-C11 | change-password: 401 anonymous, wrong current (400), policy (short / no digit / same / missing), success + fresh session + no password material, old/new password, target is always the caller, other sessions revoked, BCrypt hash changed, Admin can use it, brute force via stolen token locks (429), disabled user refused |
+| H01-H17 | X-Request-Id on all responses and = traceId, echo/replace rules, security headers on 200/401/404/400 and public 404, no Server header, RFC 7807 fields + legacy fields, actionable validation errors, 413 on login and on ingest, access-log line format and user id, no secrets in logs, path redaction, masked e-mail in failed-login logs, 500 body generic + stack trace only in server log under the same request id |
+| O01-O06 | OpenAPI: unique operationIds, documented error responses per operation, ApiError RFC 7807 fields + X-Request-Id header, additive-only compatibility with the Stage A contract (baseline file), exactly one new route, change-password documented |
+| Q01-Q05 | includeTotal=false (totals null, hasNextPage), default unchanged, all 7 other list endpoints, invalid value 400, filters still apply |
+| Z01-Z03 | SuperAdmin-only endpoints reject Admin/User/anonymous; route-id tampering returns 404; ESP32 ingestion contract unchanged |
+| IN1-IN5 | Live-device compatibility: optional dataDate/dataTime, IST default timestamp, 6 h clock tolerance, stored-hash key refused by default and accepted only with `DeviceAuth:AcceptStoredHashAsKey` |
+| A19, A19b | Login rate limit and 429 body/Retry-After/headers (throwaway instance with limit 5) |
+
+`S21b` is reported as **skipped**: the UAT `SensorData.created_at` default was changed outside the migrations to `UTC + 330 min`; it is reported, not altered.

@@ -178,6 +178,7 @@ public class UserService(
 
         user.IsActive = req.IsActive;
         user.UpdatedAt = DateTime.UtcNow;
+        if (req.IsActive) { user.FailedLoginCount = 0; user.LastFailedLoginAt = null; user.LockoutUntil = null; }
         if (!req.IsActive) await RevokeRefreshTokensAsync(id, ct);
         await db.SaveChangesAsync(ct);
         log.LogInformation("User {Id} active={Active} set by {CallerId}", id, req.IsActive, caller.Id);
@@ -218,6 +219,8 @@ public class UserService(
         await resetValidator.ValidateAndThrowAsync(req, ct);
         user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(req.NewPassword);
         user.UpdatedAt = DateTime.UtcNow;
+        // A reset is also the recovery path for a locked-out account.
+        user.FailedLoginCount = 0; user.LastFailedLoginAt = null; user.LockoutUntil = null;
         await RevokeRefreshTokensAsync(id, ct);
         await db.SaveChangesAsync(ct);
         log.LogInformation("Password of user {Id} reset by {CallerId}", id, caller.Id);

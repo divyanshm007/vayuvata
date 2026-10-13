@@ -12,7 +12,8 @@ namespace VayuVata.Services;
 
 public class SensorDataService(
     VayuVataDbContext db, IValidator<CreateSensorDataRequest> validator,
-    IConfiguration config, IWebHostEnvironment env, ILogger<SensorDataService> log)
+    IConfiguration config, IWebHostEnvironment env, Microsoft.Extensions.Options.IOptions<IngestOptions> ingest,
+    Microsoft.Extensions.Options.IOptions<DeviceAuthOptions> deviceAuth, ILogger<SensorDataService> log)
 {
     private static IQueryable<SensorDataDto> Project(IQueryable<SensorData> q) => q.Select(s => new SensorDataDto
     {
@@ -39,9 +40,9 @@ public class SensorDataService(
         }
         if (!device.IsActive) throw ApiException.Forbidden("Device is inactive.");
 
-        var recorded = req.RecordedAt is { } r
-            ? (r.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(r, DateTimeKind.Utc) : r.ToUniversalTime())
-            : DateTime.UtcNow;
+        // The device clock reports IST wall-clock time; a supplied recordedAt is stored exactly as sent (no zone conversion),
+        // and an omitted one is stamped with the same convention. Both match the behaviour the live ESP32 integration relies on.
+        var recorded = req.RecordedAt is { } r ? r : DateTime.UtcNow.AddMinutes(ingest.Value.MissingRecordedAtOffsetMinutes);
         recorded = new DateTime(recorded.Ticks - recorded.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc);
 
         if (await db.SensorData.AnyAsync(s => s.DeviceCode == device.DeviceId && s.RecordedAt == recorded, ct))
@@ -51,8 +52,8 @@ public class SensorDataService(
         {
             DeviceCode = device.DeviceId,
             RecordedAt = recorded,
-            DataDate = DateOnly.FromDateTime(recorded),
-            DataTime = TimeOnly.FromDateTime(recorded),
+            DataDate = req.DataDate ?? DateOnly.FromDateTime(recorded),
+            DataTime = req.DataTime ?? TimeOnly.FromDateTime(recorded),
             Aqi = req.Aqi, AqiStatus = req.AqiStatus?.Trim(),
             Pm10 = req.Pm10, Pm25 = req.Pm25, No2Ppm = req.No2Ppm, So2Ppm = req.So2Ppm, CoPpm = req.CoPpm,
             TvocPpb = req.TvocPpb, Humidity = req.Humidity, Temperature = req.Temperature,
@@ -67,12 +68,15 @@ public class SensorDataService(
         return await Project(db.SensorData.AsNoTracking().Where(s => s.Id == row.Id)).FirstAsync(ct);
     }
 
-    private static bool KeyMatches(Device device, string? provided, bool devModeAllowsMissingKey)
+    private bool KeyMatches(Device device, string? provided, bool devModeAllowsMissingKey)
     {
         if (string.IsNullOrEmpty(provided)) return devModeAllowsMissingKey;
         if (device.ApiKeyHash is null) return false;
-        return CryptographicOperations.FixedTimeEquals(
-            Encoding.ASCII.GetBytes(JwtService.Hash(provided)), Encoding.ASCII.GetBytes(device.ApiKeyHash));
+        var stored = Encoding.ASCII.GetBytes(device.ApiKeyHash);
+        if (CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(JwtService.Hash(provided)), stored)) return true;
+        // Compatibility switch (default off): the live device presents the stored key hash itself. See DeviceAuthOptions.
+        return deviceAuth.Value.AcceptStoredHashAsKey
+            && CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(provided.Trim().ToLowerInvariant()), stored);
     }
 
     public Task<PagedResult<SensorDataDto>> QueryAsync(SensorDataQuery q, CurrentUser caller, CancellationToken ct)

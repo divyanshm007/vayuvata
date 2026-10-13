@@ -2,7 +2,7 @@
 CREATE UNIQUE INDEX IX_Users_Email ON dbo.Users (Email);
 CREATE INDEX IX_Users_ManagerId ON dbo.Users (ManagerId);
 
-CREATE UNIQUE INDEX IX_Devices_DeviceId ON dbo.Devices (DeviceId);
+-- Devices.DeviceId uniqueness is enforced by the unique constraint AK_Devices_DeviceId (created with the table); no second index.
 
 -- One ACTIVE assignment per device (filtered unique index) - also stops concurrent double-assignment.
 CREATE UNIQUE INDEX UX_DeviceAssignments_ActiveDevice ON dbo.DeviceAssignments (DeviceRecordId) WHERE IsActive = 1;
@@ -16,5 +16,7 @@ CREATE UNIQUE INDEX UX_SensorData_device_recorded ON dbo.SensorData (device_id, 
 
 CREATE UNIQUE INDEX IX_RefreshTokens_TokenHash ON dbo.RefreshTokens (TokenHash);
 CREATE INDEX IX_RefreshTokens_UserId ON dbo.RefreshTokens (UserId);
+CREATE INDEX IX_RefreshTokens_FamilyId ON dbo.RefreshTokens (FamilyId);
+CREATE INDEX IX_RefreshTokens_ExpiresAt ON dbo.RefreshTokens (ExpiresAt);
 PRINT 'Indexes created.';
 GO

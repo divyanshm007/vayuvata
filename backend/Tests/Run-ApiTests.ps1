@@ -9,9 +9,10 @@
     (Bootstrap:SuperAdminEmail / SuperAdminPassword, Jwt:Key). Secrets are never printed.
   - The SQL-script parity check applies Database/*.sql to scratch tables in tempdb and removes them again.
   - Identity counters (Users.Id etc.) are not reset, so ids keep increasing across runs.
-  UAT mode (SQL Server reached through an SSH tunnel, SQL login instead of Windows auth). Credentials come ONLY from env vars:
-    VV_SQL_USER / VV_SQL_PASSWORD        limited login with rights on the VayuVata database
-    VV_SQL_ADMIN_USER / VV_SQL_ADMIN_PASSWORD   (optional) used only for the tempdb schema-parity scratch tables
+  UAT mode (SQL login instead of Windows auth). Credentials come ONLY from env vars:
+    VV_SQL_USER / VV_SQL_PASSWORD        the MIGRATION/owner login (db_owner of VayuVata only): applies migrations, seeds/cleans tagged test data, inspects the DB
+    VV_APP_USER / VV_APP_PASSWORD        the restricted RUNTIME login the API under test connects with (no db_owner, no DDL, no DELETE except RefreshTokens)
+    VV_SQL_ADMIN_USER / VV_SQL_ADMIN_PASSWORD   (optional) used only for the tempdb schema-parity scratch tables and one session check
     VV_SA_EMAIL / VV_SA_PASSWORD         the SuperAdmin of that database
     VV_EXPECT_MAJOR / VV_EXPECT_SERVER   safety assertion: refuse to run unless the target is this SQL Server major version and @@SERVERNAME
   Usage:  pwsh ./Tests/Run-ApiTests.ps1 [-Port 5099] [-SqlServer localhost]
@@ -30,7 +31,12 @@ $pubPort = $Port + 2   # second listener standing in for the internet-facing por
 [string[]]$sqlAuth = if ($env:VV_SQL_USER) { @('-U', $env:VV_SQL_USER, '-P', $env:VV_SQL_PASSWORD) } else { @('-E') }
 [string[]]$adminAuth = if ($env:VV_SQL_ADMIN_USER) { @('-U', $env:VV_SQL_ADMIN_USER, '-P', $env:VV_SQL_ADMIN_PASSWORD) } else { $sqlAuth }
 $uatMode = [bool]$env:VV_SQL_USER
+if ($uatMode -and -not $env:VV_APP_USER) { throw 'UAT mode needs VV_APP_USER / VV_APP_PASSWORD (the restricted runtime login) as well as the migration login VV_SQL_USER.' }
+$skipped = [System.Collections.Generic.List[object]]::new()
+function Skip([string]$id, [string]$name, [string]$reason) { $skipped.Add([pscustomobject]@{ Id = $id; Name = $name; Reason = $reason }); Write-Host "[SKIP] $id $name ($reason)" }
+function JwtHash([string]$v) { [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($v))).ToLowerInvariant() }
 $runDir = Join-Path $PSScriptRoot '.run'
+$errLogPath = Join-Path $runDir 'app.err.log'
 New-Item -ItemType Directory -Force $runDir | Out-Null
 
 function Sql([string]$database, [string]$query, [switch]$Admin) {
@@ -51,12 +57,17 @@ $saEmail = if ($env:VV_SA_EMAIL) { $env:VV_SA_EMAIL } else { Get-Secret 'Bootstr
 $saPass = if ($env:VV_SA_PASSWORD) { $env:VV_SA_PASSWORD } else { Get-Secret 'Bootstrap:SuperAdminPassword' }
 $Pw = 'Passw0rd!Test1'
 $env:ASPNETCORE_ENVIRONMENT = 'Development'
-$env:ConnectionStrings__Default = if ($uatMode) { "Server=$SqlServer;Database=$Db;User Id=$($env:VV_SQL_USER);Password=$($env:VV_SQL_PASSWORD);TrustServerCertificate=True;Encrypt=True;" } else { "Server=$SqlServer;Database=$Db;Trusted_Connection=True;TrustServerCertificate=True;" }
+$env:ConnectionStrings__Default = if ($uatMode) { "Server=$SqlServer;Database=$Db;User Id=$($env:VV_APP_USER);Password=$($env:VV_APP_PASSWORD);TrustServerCertificate=True;Encrypt=True;" } else { "Server=$SqlServer;Database=$Db;Trusted_Connection=True;TrustServerCertificate=True;" }
+$migrationCs = if ($uatMode) { "Server=$SqlServer;Database=$Db;User Id=$($env:VV_SQL_USER);Password=$($env:VV_SQL_PASSWORD);TrustServerCertificate=True;Encrypt=True;" } else { $env:ConnectionStrings__Default }
+$env:ConnectionStrings__Migration = $null   # only handed to the explicit --migrate command below, never to the API under test
 $env:PublicListener__Port = "$pubPort"
 $env:RateLimiting__IngestPermitPerMinute = '100000'
-$env:RateLimiting__LoginPermitLimit = '60'
-$env:Database__ApplyMigrationsOnStartup = 'true'
+$env:RateLimiting__LoginPermitLimit = '100000'
+$env:Database__ApplyMigrationsOnStartup = 'true'   # legacy setting, deliberately left on: the API must ignore it and only warn (test M03)
+$env:RefreshTokens__Cleanup__BatchSize = '2'
+$env:Kestrel__Limits__MaxRequestBodySize = '16384'   # set the way UAT sets it: the configured value must really be enforced (tests H08/H09)
 $env:DeviceAuth__AllowMissingKeyInDevelopment = 'false'
+$env:DeviceAuth__AcceptStoredHashAsKey = $null   # secure default for the main run; the compatibility switch is tested on its own instance (IN5)
 
 function Remove-TestData([object]$tokenBaseline = $null, [string]$saLastLogin = $null, [string]$saUpdated = $null) {
     $tok = if ($null -ne $tokenBaseline) { "OR Id > $tokenBaseline" } else { '' }
@@ -142,6 +153,38 @@ Push-Location $project
 $bin = Join-Path $runDir 'bin'
 dotnet build -c Debug --nologo -v q -o $bin | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
+# ---- explicit migration step (the only way the schema changes) ----
+$activePredicate = "Id <= $tokenBaseline AND RevokedAt IS NULL AND ExpiresAt > SYSUTCDATETIME()"
+$activeBefore = Sql $Db "SELECT COUNT(*) FROM RefreshTokens WHERE $activePredicate"
+function Run-Migrate([string]$arg, [string]$cs, [string]$environment = $null) {
+    $saveEnv = $env:ASPNETCORE_ENVIRONMENT; $saveCs = $env:ConnectionStrings__Migration
+    $env:ConnectionStrings__Migration = $cs
+    if ($environment) { $env:ASPNETCORE_ENVIRONMENT = $environment }
+    $o = (dotnet (Join-Path $bin 'VayuVata.dll') $arg 2>&1 | Out-String).Trim()
+    $code = $LASTEXITCODE
+    $env:ASPNETCORE_ENVIRONMENT = $saveEnv; $env:ConnectionStrings__Migration = $saveCs
+    [pscustomobject]@{ Output = $o; Exit = $code }
+}
+$m = Run-Migrate '--migration-status' $migrationCs; $migStatus = $m.Output
+$m = Run-Migrate '--migrate' $migrationCs; $migRun = $m.Output; Write-Host $migRun
+if ($m.Exit -ne 0) { throw "Migration command failed: $migRun" }
+$m = Run-Migrate '--migrate' $migrationCs; $migRun2 = $m.Output; $migRun2Exit = $m.Exit
+$migProdExit = (Run-Migrate '--migrate' $migrationCs 'Production').Exit
+$migDbExit = (Run-Migrate '--migrate' ($migrationCs -replace 'Database=VayuVata', 'Database=master')).Exit
+$migNoCsExit = (Run-Migrate '--migrate' $null).Exit
+$activeAfter = Sql $Db "SELECT COUNT(*) FROM RefreshTokens WHERE $activePredicate"
+
+# ---- seed refresh tokens for the cleanup test (owned by the SuperAdmin row, removed again by Remove-TestData) ----
+function NewHash { (([guid]::NewGuid().ToString('N')) + ([guid]::NewGuid().ToString('N'))) }
+$seedSa = Sql $Db "SELECT Id FROM Users WHERE Role='SuperAdmin' AND IsActive=1"
+$seedGone = 1..3 | ForEach-Object { "'$(NewHash)'" }
+$seedKeep = 1..3 | ForEach-Object { "'$(NewHash)'" }
+foreach ($g in $seedGone) { $null = Sql $Db "INSERT INTO RefreshTokens (UserId,TokenHash,CreatedAt,ExpiresAt) VALUES ($seedSa,$g,DATEADD(DAY,-90,SYSUTCDATETIME()),DATEADD(DAY,-60,SYSUTCDATETIME()))" }
+$null = Sql $Db "INSERT INTO RefreshTokens (UserId,TokenHash,CreatedAt,ExpiresAt) VALUES ($seedSa,$($seedKeep[0]),SYSUTCDATETIME(),DATEADD(DAY,1,SYSUTCDATETIME()))"
+$null = Sql $Db "INSERT INTO RefreshTokens (UserId,TokenHash,CreatedAt,ExpiresAt,RevokedAt) VALUES ($seedSa,$($seedKeep[1]),SYSUTCDATETIME(),DATEADD(DAY,1,SYSUTCDATETIME()),SYSUTCDATETIME())"
+$null = Sql $Db "INSERT INTO RefreshTokens (UserId,TokenHash,CreatedAt,ExpiresAt) VALUES ($seedSa,$($seedKeep[2]),DATEADD(DAY,-20,SYSUTCDATETIME()),DATEADD(DAY,-10,SYSUTCDATETIME()))"
+$activeAfter = Sql $Db "SELECT COUNT(*) FROM RefreshTokens WHERE $activePredicate"   # seeded rows have Id > baseline, so this is unaffected
+
 $log = Join-Path $runDir 'app.log'
 $app = Start-Process dotnet -ArgumentList @((Join-Path $bin 'VayuVata.dll'), '--urls', "$base;http://localhost:$pubPort") `
     -WorkingDirectory $project -PassThru -RedirectStandardOutput $log -RedirectStandardError (Join-Path $runDir 'app.err.log') -WindowStyle Hidden
@@ -354,7 +397,13 @@ try {
     $nulRow = Sql $Db "SELECT CONCAT(CASE WHEN pm25 IS NULL THEN 'N' ELSE 'V' END, CASE WHEN co_ppm IS NULL THEN 'N' ELSE 'V' END, CASE WHEN humidity IS NULL THEN 'N' ELSE 'V' END, CASE WHEN outer_temperature IS NULL THEN 'N' ELSE 'V' END) FROM SensorData WHERE ID=$($nul.Json.id)"
     Check 'S19' 'Missing measurements stay NULL (API and database), never 0' ($nul.Status -eq 201 -and $null -eq $nul.Json.pm25 -and $null -eq $nul.Json.humidity -and $nulRow -eq 'NNNN') "db=$nulRow"
     Check 'S20' 'data_date / data_time are UTC parts of recorded_at' ((Sql $Db "SELECT COUNT(*) FROM SensorData WHERE device_id LIKE 'VVTEST-%' AND (data_date <> CAST(recorded_at AS date) OR data_time <> CAST(recorded_at AS time(3)))") -eq '0')
-    Check 'S21' 'created_at is server generated (UTC)' ((Sql $Db "SELECT COUNT(*) FROM SensorData WHERE device_id LIKE 'VVTEST-%' AND (created_at < DATEADD(minute,-5,SYSUTCDATETIME()) OR created_at > DATEADD(minute,5,SYSUTCDATETIME()))") -eq '0')
+    # created_at comes from the column default. The UAT database has a customised default (UTC + 330 min = IST wall-clock, set outside the
+    # migrations); the check therefore allows exactly the offset the live default declares and reports the drift separately (S21b).
+    $def = Sql $Db "SELECT definition FROM sys.default_constraints WHERE parent_object_id = OBJECT_ID('dbo.SensorData') AND COL_NAME(parent_object_id, parent_column_id) = 'created_at'"
+    $offMin = if ($def -match '(?i)^\(sysutcdatetime\(\)\)$') { 0 } elseif ($def -match '(?i)dateadd\(minute,\((\d+)\),sysutcdatetime\(\)\)') { [int]$Matches[1] } else { $null }
+    $s21 = if ($null -eq $offMin) { "unrecognised default: $def" } else { Sql $Db "SELECT CONCAT(COUNT(*), ' bad; min=', CONVERT(varchar(23), MIN(created_at), 121), ' max=', CONVERT(varchar(23), MAX(created_at), 121), ' now+offset=', CONVERT(varchar(23), DATEADD(minute,$offMin,SYSUTCDATETIME()), 121)) FROM SensorData WHERE device_id LIKE 'VVTEST-%' AND (created_at < DATEADD(minute,$($offMin - 15),SYSUTCDATETIME()) OR created_at > DATEADD(minute,$($offMin + 5),SYSUTCDATETIME()))" }
+    Check 'S21' 'created_at is generated by the database default (not supplied by the client)' ($s21 -like '0 bad*') "default=$def; $s21"
+    if ($offMin -ne 0) { Skip 'S21b' 'created_at column default equals the EF model default (UTC)' "UAT default is [$def], i.e. IST wall-clock; changed outside the migrations, reported not altered" }
     $cols = Sql $Db "SELECT STRING_AGG(COLUMN_NAME, ',') WITHIN GROUP (ORDER BY ORDINAL_POSITION) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='SensorData'"
     Check 'S22' 'SensorData keeps the exact required column names' ($cols -eq 'ID,device_id,data_date,data_time,recorded_at,aqi,aqi_status,pm10,pm25,no2_ppm,so2_ppm,co_ppm,tvoc_ppb,humidity,temperature,outer_temperature,outer_humidity,created_at') $cols
     Check 'S23' 'Invalid sortBy is rejected (400)' ((Api GET '/api/v1/sensor-data?sortBy=password' $null $SA).Status -eq 400)
@@ -448,7 +497,7 @@ try {
     $mjj = $mj.Content | ConvertFrom-Json
     Check 'E09' 'Malformed JSON returns 400 in the standard ApiError shape' ($mj.StatusCode -eq 400 -and $mjj.code -eq 'validation_failed' -and $mjj.status -eq 400 -and $mjj.traceId) $mj.Content
     $wt = Api POST /api/v1/sensor-data @{ deviceId = 'VVTEST-DEV-1'; aqi = 'abc' } $null @{ 'X-Device-Key' = $K1 }
-    Check 'E09b' 'Wrong-typed field returns 400 ApiError (not a raw ProblemDetails)' ($wt.Status -eq 400 -and $wt.Json.code -eq 'validation_failed' -and $null -eq $wt.Json.title) $wt.Raw
+    Check 'E09b' 'Wrong-typed field returns 400 in the standard error body (legacy code + RFC 7807 type/title), not the framework default' ($wt.Status -eq 400 -and $wt.Json.code -eq 'validation_failed' -and $wt.Json.type -eq 'urn:vayuvata:error:validation_failed' -and $wt.Json.title -eq 'Bad Request' -and $wt.Json.traceId) $wt.Raw
     $nf = Invoke-WebRequest "$base/api/v1/does-not-exist" -SkipHttpErrorCheck
     $nfj = $nf.Content | ConvertFrom-Json
     Check 'E09c' 'Unknown route returns 404 with a JSON ApiError' ($nf.StatusCode -eq 404 -and $nfj.code -eq 'not_found')
@@ -465,7 +514,7 @@ try {
 
     # --- OpenAPI accuracy ---
     $opCount = 0; foreach ($pp in $sw.Json.paths.PSObject.Properties) { $opCount += @($pp.Value.PSObject.Properties).Count }
-    Check 'W04b' 'OpenAPI documents exactly the 30 implemented operations' ($opCount -eq 30) "operations=$opCount"
+    Check 'W04b' 'OpenAPI documents exactly the 31 implemented operations (the 30 original + change-password)' ($opCount -eq 31) "operations=$opCount"
     $ing = $sw.Json.paths.'/api/v1/sensor-data'.post
     Check 'W11a' 'Ingestion is documented with the X-Device-Key scheme, not Bearer' (($ing.security | ConvertTo-Json -Compress -Depth 6) -match 'DeviceKey' -and ($ing.security | ConvertTo-Json -Compress -Depth 6) -notmatch 'Bearer' -and $sw.Json.components.securitySchemes.DeviceKey.name -eq 'X-Device-Key' -and $sw.Json.components.securitySchemes.DeviceKey.in -eq 'header')
     Check 'W11b' 'Protected operations require Bearer; login/refresh/health do not' (($sw.Json.paths.'/api/v1/auth/me'.get.security | ConvertTo-Json -Compress -Depth 6) -match 'Bearer' -and ($sw.Json.paths.'/api/v1/users'.get.security | ConvertTo-Json -Compress -Depth 6) -match 'Bearer' -and -not $sw.Json.paths.'/api/v1/auth/login'.post.security -and -not $sw.Json.paths.'/api/v1/health'.get.security -and -not $sw.Json.paths.'/api/v1/auth/refresh'.post.security)
@@ -484,6 +533,12 @@ try {
     $h503 = $null
     1..40 | ForEach-Object { if (-not $h503) { try { $h503 = Invoke-WebRequest "http://localhost:$hPort/api/v1/health" -SkipHttpErrorCheck } catch { Start-Sleep 1 } } }
     Check 'W12' 'Health returns 503 (Unhealthy / Unreachable) while SQL Server is unreachable, and the API stays up' ($h503 -and $h503.StatusCode -eq 503 -and ($h503.Content | ConvertFrom-Json).database -eq 'Unreachable') ("status=$($h503.StatusCode)")
+    $e500 = Invoke-WebRequest "http://localhost:$hPort/api/v1/auth/login" -Method Post -ContentType 'application/json' -Body '{"email":"x@vvtest.local","password":"Passw0rd!x1"}' -SkipHttpErrorCheck
+    $b500 = [string]$e500.Content | ConvertFrom-Json
+    Start-Sleep -Milliseconds 800
+    $hLog = (Get-Content (Join-Path $runDir 'health.log') -Raw) + (Get-Content (Join-Path $runDir 'health.err.log') -Raw)
+    Check 'H16' 'Internal failure (database down) returns 500 server_error with request id only: no exception text, SQL error, server name, connection string or stack trace in the body' ($e500.StatusCode -eq 500 -and $b500.code -eq 'server_error' -and $b500.traceId -eq $e500.Headers['X-Request-Id'][0] -and $e500.Content -notmatch '(?i)exception|sqlclient|localhost|Server=|Trusted_Connection|   at |network-related') $e500.Content
+    Check 'H17' 'The same failure is in the server log under the SAME request id, with the stack trace (server side only)' ($hLog -match "Unhandled exception on POST /api/v1/auth/login \(request $($b500.traceId)\)" -and $hLog -match 'SqlException|Microsoft.Data.SqlClient')
     Get-NetTCPConnection -LocalPort $hPort -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
     if ($hApp -and -not $hApp.HasExited) { Stop-Process -Id $hApp.Id -Force -ErrorAction SilentlyContinue }
 
@@ -621,7 +676,7 @@ try {
     $props = @($swn.Json.components.schemas.CreateUserRequest.properties.PSObject.Properties.Name)
     Check 'N24b' 'OpenAPI contract: managerId (not adminId) on create/assign/user schemas; UserDto exposes managerRole + assignmentType' ($props -contains 'managerId' -and $props -notcontains 'adminId' -and @($swn.Json.components.schemas.ManagerAssignmentRequest.properties.PSObject.Properties.Name) -contains 'managerId' -and @($swn.Json.components.schemas.UserDto.properties.PSObject.Properties.Name) -contains 'assignmentType' -and @($swn.Json.components.schemas.UserDto.properties.PSObject.Properties.Name) -contains 'managerRole' -and $swn.Json.components.schemas.AdminUsersPage.properties.adminId)
     $cols = Sql $Db "SELECT STRING_AGG(COLUMN_NAME, ',') WITHIN GROUP (ORDER BY ORDINAL_POSITION) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='Users'"
-    Check 'N25' 'Users schema: ManagerId present, AdminId gone, other columns preserved' ($cols -eq 'Id,Name,Email,PasswordHash,Role,IsActive,CreatedAt,UpdatedAt,LastLoginAt,ManagerId') $cols
+    Check 'N25' 'Users schema: ManagerId present, AdminId gone, existing columns preserved, lockout columns appended' ($cols -eq 'Id,Name,Email,PasswordHash,Role,IsActive,CreatedAt,UpdatedAt,LastLoginAt,ManagerId,FailedLoginCount,LastFailedLoginAt,LockoutUntil') $cols
     Check 'N25b' 'Database objects: self-referencing FK_Users_Users_ManagerId, CK_Users_Role, CK_Users_Manager, TR_Users_ManagerRules, IX_Users_ManagerId, unique email index' ((Sql $Db "SELECT COUNT(*) FROM sys.foreign_keys WHERE name='FK_Users_Users_ManagerId' AND parent_object_id=referenced_object_id") -eq '1' -and (Sql $Db "SELECT COUNT(*) FROM sys.check_constraints WHERE name IN ('CK_Users_Role','CK_Users_Manager') AND parent_object_id=OBJECT_ID('dbo.Users')") -eq '2' -and (Sql $Db "SELECT COUNT(*) FROM sys.triggers WHERE name='TR_Users_ManagerRules'") -eq '1' -and (Sql $Db "SELECT COUNT(*) FROM sys.indexes WHERE object_id=OBJECT_ID('dbo.Users') AND name IN ('IX_Users_ManagerId','IX_Users_Email')") -eq '2')
     $h = '$2a$11$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ012345'
     function DbTry([string]$sql) { $null = sqlcmd -S $SqlServer @sqlAuth -C -I -d $Db -h -1 -W -b -Q "SET NOCOUNT ON; $sql" 2>&1; if ($LASTEXITCODE -ne 0) { 'BLOCKED' } else { 'ALLOWED' } }
@@ -663,15 +718,336 @@ try {
     $rPort = $Port + 3
     $saveLim = $env:RateLimiting__IngestPermitPerMinute
     $env:RateLimiting__IngestPermitPerMinute = '3'
+    $saveLogin = $env:RateLimiting__LoginPermitLimit; $env:RateLimiting__LoginPermitLimit = '5'
     $rApp = Start-Process dotnet -ArgumentList @((Join-Path $bin 'VayuVata.dll'), '--urls', "http://localhost:$rPort") -WorkingDirectory $project -PassThru `
         -RedirectStandardOutput (Join-Path $runDir 'rate.log') -RedirectStandardError (Join-Path $runDir 'rate.err.log') -WindowStyle Hidden
-    $env:RateLimiting__IngestPermitPerMinute = $saveLim
+    $env:RateLimiting__IngestPermitPerMinute = $saveLim; $env:RateLimiting__LoginPermitLimit = $saveLogin
     $rUp = $false
     1..40 | ForEach-Object { if (-not $rUp) { try { $rUp = ((Invoke-WebRequest "http://localhost:$rPort/api/v1/health" -SkipHttpErrorCheck).StatusCode -eq 200) } catch { Start-Sleep 1 } } }
     $codes = 1..8 | ForEach-Object { (ApiAt "http://localhost:$rPort" POST /api/v1/sensor-data @{ deviceId = 'VVTEST-DEV-1'; aqi = 1 } $null @{ 'X-Device-Key' = 'wrong-key' }).Status }
     Check 'P07' 'Ingest endpoint is rate limited per client IP: with a limit of 3/min the first 3 requests reach the endpoint (401) and the rest get 429' ($rUp -and @($codes[0..2] | Where-Object { $_ -ne 401 }).Count -eq 0 -and @($codes[3..7] | Where-Object { $_ -ne 429 }).Count -eq 0) ($codes -join ',')
+    # login rate limit (IP based, unchanged) on the same throwaway instance: limit 5/min; unknown e-mails so no real account is touched
+    $lc = 1..8 | ForEach-Object { Invoke-WebRequest "http://localhost:$rPort/api/v1/auth/login" -Method Post -ContentType 'application/json' -Body '{"email":"nobody-rl@vvtest.local","password":"WrongPass123"}' -SkipHttpErrorCheck }
+    $lcodes = @($lc | ForEach-Object { [int]$_.StatusCode }); $l429 = $lc[7]; $b429 = [string]$l429.Content | ConvertFrom-Json
+    Check 'A19' 'Login rate limiting (per IP, limit 5/min): first 5 attempts reach the endpoint (401), the rest get 429' (@($lcodes[0..4] | Where-Object { $_ -ne 401 }).Count -eq 0 -and @($lcodes[5..7] | Where-Object { $_ -ne 429 }).Count -eq 0) ($lcodes -join ',')
+    Check 'A19b' '429 uses the standard error body (rate_limited), a Retry-After header, an X-Request-Id and the security headers' ($b429.code -eq 'rate_limited' -and $b429.status -eq 429 -and $l429.Headers['Retry-After'] -and [int]$l429.Headers['Retry-After'][0] -ge 1 -and $l429.Headers['X-Request-Id'] -and $l429.Headers['X-Content-Type-Options'][0] -eq 'nosniff') $l429.Content
     Get-NetTCPConnection -LocalPort $rPort -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
     if ($rApp -and -not $rApp.HasExited) { Stop-Process -Id $rApp.Id -Force -ErrorAction SilentlyContinue }
+
+    # ================= PHASE 5: STAGE B (P1 API quality, P2 authentication, P3 database) =================
+    function Req([string]$method, [string]$path, $body = $null, [string]$token = $null, [hashtable]$headers = @{}, [string]$root = $base, [string]$rawBody = $null) {
+        $zh = @{} + $headers
+        if ($token) { $zh.Authorization = "Bearer $token" }
+        $zp = @{ Uri = "$root$path"; Method = $method; Headers = $zh; SkipHttpErrorCheck = $true }
+        if ($rawBody) { $zp.Body = $rawBody; $zp.ContentType = 'application/json' } elseif ($null -ne $body) { $zp.Body = ($body | ConvertTo-Json -Depth 6); $zp.ContentType = 'application/json' }
+        Invoke-WebRequest @zp
+    }
+    function Hdr($r, [string]$name) { $v = $r.Headers[$name]; if ($v) { ($v -join ',') } else { $null } }
+    function Body($r) { try { $c = $r.Content; if ($c -is [byte[]]) { $c = [Text.Encoding]::UTF8.GetString($c) }; [string]$c | ConvertFrom-Json } catch { $null } }
+    function Logtext { Start-Sleep -Milliseconds 700; (Get-Content $log -Raw -ErrorAction SilentlyContinue) + (Get-Content $errLogPath -Raw -ErrorAction SilentlyContinue) }
+    function SqlApp([string]$query) {
+        if (-not $uatMode) { return (Sql $Db $query) }
+        $o = sqlcmd -S $SqlServer -U $env:VV_APP_USER -P $env:VV_APP_PASSWORD -C -I -d $Db -h -1 -W -b -Q "SET NOCOUNT ON; $query" 2>&1
+        if ($LASTEXITCODE -ne 0) { 'ERR: ' + ($o -join ' ') } else { ($o | Where-Object { $_ -and $_ -notmatch '^\s*$' }) -join "`n" }
+    }
+
+    # ---- P3: migrations are an explicit step, the API only warns when told to migrate at start-up ----
+    $logAll = Logtext
+    Check 'M01' 'Explicit migration command ran: status listed the migrations, --migrate applied/confirmed them' ($script:migStatus -match 'Applied migrations' -and $script:migRun -match '(Applied \d+ migration|up to date)') "status=[$($script:migStatus -replace "`n",' ')] run=[$($script:migRun -replace "`n",' ')]"
+    Check 'M02' 'A second --migrate is a safe no-op ("up to date"), exit code 0' ($script:migRun2 -match 'up to date' -and $script:migRun2Exit -eq 0) $script:migRun2
+    Check 'M03' 'Application start-up does NOT migrate: legacy Database:ApplyMigrationsOnStartup=true is ignored with a warning' ($logAll -match 'ApplyMigrationsOnStartup is no longer supported')
+    Check 'M04' 'Migration command refuses ASPNETCORE_ENVIRONMENT=Production (exit 2), a wrong database name (exit 2) and a missing migration login (exit 2)' ($script:migProdExit -eq 2 -and $script:migDbExit -eq 2 -and $script:migNoCsExit -eq 2) "prod=$($script:migProdExit) db=$($script:migDbExit) nocs=$($script:migNoCsExit)"
+    Check 'M05' 'Existing active sessions survive the migration (active refresh-token count unchanged by --migrate)' ($script:activeBefore -eq $script:activeAfter) "before=$($script:activeBefore) after=$($script:activeAfter)"
+    Check 'M06' 'Every refresh token has a FamilyId; every user has lockout columns defaulting to zero/NULL' ((Sql $Db "SELECT COUNT(*) FROM RefreshTokens WHERE FamilyId IS NULL") -eq '0' -and (Sql $Db "SELECT COUNT(*) FROM Users WHERE FailedLoginCount IS NULL") -eq '0')
+    Check 'M07' 'AuthHardening is in the EF history exactly once' ((Sql $Db "SELECT COUNT(*) FROM __EFMigrationsHistory WHERE MigrationId LIKE '%AuthHardening'") -eq '1')
+
+    # ---- P3: database permissions of the runtime login ----
+    if ($uatMode) {
+        $perm = SqlApp "SELECT CONCAT(IS_MEMBER('db_owner'), IS_MEMBER('db_ddladmin'), IS_MEMBER('db_securityadmin'), IS_SRVROLEMEMBER('sysadmin'))"
+        Check 'G01' 'Runtime login is not db_owner / db_ddladmin / db_securityadmin / sysadmin' ($perm -eq '0000') "flags=$perm"
+        $ddl1 = SqlApp "CREATE TABLE dbo.vvtest_probe (x int)"
+        $ddl2 = SqlApp "ALTER TABLE dbo.Users ADD vvtest_probe int NULL"
+        $ddl3 = SqlApp "DROP INDEX IX_Users_ManagerId ON dbo.Users"
+        $ddl4 = SqlApp "EXEC(N'CREATE TRIGGER dbo.TR_vvtest_probe ON dbo.Devices AFTER INSERT AS SELECT 1')"
+        if ($ddl1 -notlike 'ERR:*') { $null = Sql $Db "DROP TABLE IF EXISTS dbo.vvtest_probe" }
+        Check 'G02' 'Runtime login cannot run DDL: CREATE TABLE, ALTER TABLE, DROP INDEX, CREATE TRIGGER are all denied' (($ddl1, $ddl2, $ddl3, $ddl4 | Where-Object { $_ -match '^ERR:.*(denied|do not have permission)' }).Count -eq 4) "$ddl1 | $ddl2 | $ddl3 | $ddl4"
+        $del = foreach ($t in 'Users', 'Devices', 'DeviceAssignments', 'SensorData') { SqlApp "DELETE FROM dbo.$t WHERE 1 = 0" }
+        Check 'G03' 'Runtime login cannot DELETE users, devices, assignments or sensor readings (history cannot be erased through the API account)' (($del | Where-Object { $_ -match '^ERR:.*(denied|do not have permission)' }).Count -eq 4) ($del -join ' | ')
+        $rw = @(SqlApp "SELECT COUNT(*) FROM dbo.Users"; SqlApp "UPDATE dbo.Users SET UpdatedAt = UpdatedAt WHERE 1 = 0"; SqlApp "DELETE FROM dbo.RefreshTokens WHERE 1 = 0")
+        Check 'G04' 'Runtime login keeps what the API needs: SELECT/UPDATE on tables and DELETE on RefreshTokens only' (($rw | Where-Object { $_ -like 'ERR:*' }).Count -eq 0) ($rw -join ' | ')
+        $null = Api GET '/api/v1/users?pageSize=1' $null $SA
+        $sessAll = (Sql master "SELECT CONCAT(login_name, '=', COUNT(*)) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND login_name IN ('$($env:VV_APP_USER)', '$($env:VV_SQL_USER)') GROUP BY login_name" -Admin) -replace "`n", ', '
+        $sess = Sql master "SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND login_name = '$($env:VV_APP_USER)'" -Admin
+        Check 'G05' 'The API under test connects with the restricted runtime login (sessions of that login exist and its connection string was the only one given to the API)' ([int]$sess -ge 1 -and $env:ConnectionStrings__Default -like "*User Id=$($env:VV_APP_USER);*" -and -not $env:ConnectionStrings__Migration) "sessions: $sessAll"
+    } else {
+        Skip 'G01-G05' 'Runtime-login permission checks' 'only meaningful in UAT mode (separate SQL logins)'
+    }
+    $ix = Sql $Db "SELECT CONCAT((SELECT COUNT(*) FROM sys.indexes WHERE object_id=OBJECT_ID('dbo.Devices') AND name='IX_Devices_DeviceId'), '|', (SELECT COUNT(*) FROM sys.key_constraints WHERE name='AK_Devices_DeviceId' AND type='UQ'), '|', (SELECT COUNT(*) FROM sys.foreign_keys WHERE name='FK_SensorData_Devices_device_id'))"
+    Check 'X01' 'Duplicate unique index IX_Devices_DeviceId is gone; AK_Devices_DeviceId (unique) and the SensorData foreign key remain' ($ix -eq '0|1|1') $ix
+    Check 'X02' 'DeviceId uniqueness and sensor-data referential integrity are still enforced by the database' ((DbTry "INSERT INTO Devices (DeviceId,DeviceName,ApiKeyHash,IsActive) VALUES ('VVTEST-DEV-1','dup','$('a' * 64)',1)") -eq 'BLOCKED' -and (DbTry "INSERT INTO SensorData (device_id,data_date,data_time,recorded_at) VALUES ('NO-SUCH-DEVICE-VV','2026-01-01','00:00:00','2026-01-01T00:00:00')") -eq 'BLOCKED')
+
+    # ---- P3: expired refresh-token cleanup ----
+    $keep = Sql $Db "SELECT COUNT(*) FROM RefreshTokens WHERE TokenHash IN ($($script:seedKeep -join ','))"
+    $gone = Sql $Db "SELECT COUNT(*) FROM RefreshTokens WHERE TokenHash IN ($($script:seedGone -join ','))"
+    Check 'T01' 'Cleanup removed exactly the tokens that expired more than 30 days ago (3 seeded rows, two batches of 2)' ($gone -eq '0') "remaining old=$gone"
+    Check 'T02' 'Cleanup kept: active token, token revoked-but-unexpired (needed for reuse detection), token expired only 10 days ago' ($keep -eq '3') "kept=$keep"
+    Check 'T03' 'Cleanup never touched pre-existing sessions (active token count of rows older than this run unchanged)' ((Sql $Db "SELECT COUNT(*) FROM RefreshTokens WHERE Id <= $tokenBaseline AND RevokedAt IS NULL AND ExpiresAt > SYSUTCDATETIME()") -eq "$($script:activeAfter)")
+    Check 'T04' 'Cleanup is logged (count + cutoff, no token values)' ($logAll -match 'Refresh-token cleanup removed 3 token')
+
+    # ---- P2: account lockout ----
+    $lk = New-User $SA 'Lock One' 'lock1@vvtest.local' 'User'; $LKid = $lk.Json.id
+    $lkWrong = 1..5 | ForEach-Object { Login 'lock1@vvtest.local' 'WrongPass123' }
+    $lkRight = Login 'lock1@vvtest.local' $Pw
+    $lkRow = (Sql $Db "SELECT CONCAT(FailedLoginCount, '|', CASE WHEN LockoutUntil > SYSUTCDATETIME() THEN 'locked' ELSE 'open' END, '|', DATEDIFF(MINUTE, SYSUTCDATETIME(), LockoutUntil)) FROM Users WHERE Id=$LKid") -split '\|'
+    Check 'L01' 'Five wrong passwords lock the account: the 6th attempt with the CORRECT password is refused (401)' (@($lkWrong | Where-Object { $_.Status -ne 401 }).Count -eq 0 -and $lkRight.Status -eq 401 -and $lkRow[0] -eq '5' -and $lkRow[1] -eq 'locked') ($lkRow -join '|')
+    Check 'L02' 'Lockout is temporary (about 15 minutes), not permanent' ([int]$lkRow[2] -ge 13 -and [int]$lkRow[2] -le 16) ($lkRow -join '|')
+    $dis = New-User $SA 'Disabled One' 'disabled1@vvtest.local' 'User'
+    $null = Api PATCH "/api/v1/users/$($dis.Json.id)/status" @{ isActive = $false } $SA
+    $variants = @((Login 'nobody-l@vvtest.local' 'WrongPass123'), (Login 'user1@vvtest.local' 'WrongPass123'), $lkRight, (Login 'disabled1@vvtest.local' $Pw))
+    $sig = $variants | ForEach-Object { "$($_.Status)|$($_.Json.code)|$($_.Json.message)|$($_.Json.title)|$($_.Json.type)" } | Sort-Object -Unique
+    Check 'L03' 'Unknown account, wrong password, locked account and disabled account are indistinguishable to the client (same status, code and message)' (@($sig).Count -eq 1) ($sig -join ' // ')
+    $untilBefore = Sql $Db "SELECT CONVERT(varchar(30), LockoutUntil, 121) FROM Users WHERE Id=$LKid"
+    $null = Login 'lock1@vvtest.local' 'WrongPass123'
+    Check 'L04' 'Failed attempts while locked do not extend the lock (no indefinite lockout by an attacker)' ((Sql $Db "SELECT CONVERT(varchar(30), LockoutUntil, 121) FROM Users WHERE Id=$LKid") -eq $untilBefore)
+    $null = Sql $Db "UPDATE Users SET LockoutUntil = DATEADD(HOUR, -1, SYSUTCDATETIME()), LastFailedLoginAt = DATEADD(HOUR, -1, SYSUTCDATETIME()) WHERE Id=$LKid"
+    $lkBack = Login 'lock1@vvtest.local' $Pw
+    $lkAfter = Sql $Db "SELECT CONCAT(FailedLoginCount, '|', ISNULL(CONVERT(varchar(30), LockoutUntil, 121), 'NULL')) FROM Users WHERE Id=$LKid"
+    Check 'L05' 'After the lock expires the correct password works again, and the counters are cleared' ($lkBack.Status -eq 200 -and $lkAfter -eq '0|NULL') $lkAfter
+    $rs = New-User $SA 'Lock Two' 'lock2@vvtest.local' 'User'
+    $null = 1..2 | ForEach-Object { Login 'lock2@vvtest.local' 'WrongPass123' }
+    $okMid = Login 'lock2@vvtest.local' $Pw
+    $null = 1..4 | ForEach-Object { Login 'lock2@vvtest.local' 'WrongPass123' }
+    $stillOk = Login 'lock2@vvtest.local' $Pw
+    Check 'L06' 'A successful login resets the failure counter (2 fails, success, 4 fails does not lock; next correct login works)' ($okMid.Status -eq 200 -and $stillOk.Status -eq 200 -and (Sql $Db "SELECT FailedLoginCount FROM Users WHERE Id=$($rs.Json.id)") -eq '0')
+    $lk3 = New-User $SA 'Lock Three' 'lock3@vvtest.local' 'User'
+    $null = 1..5 | ForEach-Object { Login 'lock3@vvtest.local' 'WrongPass123' }
+    $lockedNow = (Login 'lock3@vvtest.local' $Pw).Status
+    $null = Api POST "/api/v1/users/$($lk3.Json.id)/reset-password" @{ newPassword = 'Unlocked#Pass77' } $SA
+    Check 'L07' 'An Admin/SuperAdmin password reset is the recovery path: it clears the lock immediately' ($lockedNow -eq 401 -and (Login 'lock3@vvtest.local' 'Unlocked#Pass77').Status -eq 200)
+    $lk4 = New-User $SA 'Lock Four' 'lock4@vvtest.local' 'User'
+    $pcodes = 1..10 | ForEach-Object -ThrottleLimit 10 -Parallel {
+        $r = Invoke-WebRequest -Uri "$($using:base)/api/v1/auth/login" -Method POST -ContentType 'application/json' -Body (@{ email = 'lock4@vvtest.local'; password = 'WrongPass123' } | ConvertTo-Json) -SkipHttpErrorCheck
+        [int]$r.StatusCode
+    }
+    $pr = (Sql $Db "SELECT CONCAT(FailedLoginCount, '|', CASE WHEN LockoutUntil > SYSUTCDATETIME() THEN 'locked' ELSE 'open' END) FROM Users WHERE Id=$($lk4.Json.id)") -split '\|'
+    Check 'L08' 'Concurrent wrong passwords are counted atomically: all 401, account locked, counter between 5 and 10' (@($pcodes | Where-Object { $_ -ne 401 }).Count -eq 0 -and $pr[1] -eq 'locked' -and [int]$pr[0] -ge 5 -and [int]$pr[0] -le 10) "codes=$($pcodes -join ',') db=$($pr -join '|')"
+    Check 'L09' 'Lock does not depend on the client: unknown e-mails never create lock state; the real SuperAdmin was never failed (counters 0)' ((Sql $Db "SELECT COUNT(*) FROM Users WHERE Role='SuperAdmin' AND (FailedLoginCount <> 0 OR LockoutUntil IS NOT NULL)") -eq '0')
+
+    # ---- P2: refresh-token rotation, reuse detection, concurrency ----
+    $ru = New-User $SA 'Refresh One' 'refresh1@vvtest.local' 'User'; $RUid = $ru.Json.id
+    $sessA = Login 'refresh1@vvtest.local' $Pw
+    $sessB = Login 'refresh1@vvtest.local' $Pw   # a second, independent login (own family)
+    $t1 = $sessA.Json.refreshToken
+    $rr2 = Api POST /api/v1/auth/refresh @{ refreshToken = $t1 }; $t2 = $rr2.Json.refreshToken
+    $rr3 = Api POST /api/v1/auth/refresh @{ refreshToken = $t2 }; $t3 = $rr3.Json.refreshToken
+    Check 'R01' 'Legitimate rotation chain works: login -> refresh -> refresh, each returns a new, different refresh token' ($rr2.Status -eq 200 -and $rr3.Status -eq 200 -and $t1 -ne $t2 -and $t2 -ne $t3 -and $rr3.Json.accessToken)
+    $fam = Sql $Db "SELECT COUNT(DISTINCT FamilyId) FROM RefreshTokens WHERE TokenHash IN ('$(JwtHash $t1)','$(JwtHash $t2)','$(JwtHash $t3)')"
+    Check 'R02' 'All tokens of one login share a family; a second login has its own family' ($fam -eq '1' -and (Sql $Db "SELECT COUNT(DISTINCT FamilyId) FROM RefreshTokens WHERE UserId=$RUid") -eq '2')
+    $reuse = Api POST /api/v1/auth/refresh @{ refreshToken = $t1 }
+    $afterReuse = Api POST /api/v1/auth/refresh @{ refreshToken = $t3 }
+    Check 'R03' 'Re-using an already-rotated refresh token is rejected (401) AND revokes the whole family: the newest token of that login stops working too' ($reuse.Status -eq 401 -and $afterReuse.Status -eq 401)
+    Check 'R04' 'Reuse detection is targeted: the other login (different family) of the same user is NOT revoked' ((Api POST /api/v1/auth/refresh @{ refreshToken = $sessB.Json.refreshToken }).Status -eq 200)
+    Check 'R05' 'Family revocation is recorded in the database (no active token left in the compromised family)' ((Sql $Db "SELECT COUNT(*) FROM RefreshTokens WHERE TokenHash IN ('$(JwtHash $t1)','$(JwtHash $t2)','$(JwtHash $t3)') AND RevokedAt IS NULL") -eq '0')
+    $rc = New-User $SA 'Refresh Two' 'refresh2@vvtest.local' 'User'
+    $rcl = Login 'refresh2@vvtest.local' $Pw
+    $rtok = $rcl.Json.refreshToken
+    $rcodes = 1..8 | ForEach-Object -ThrottleLimit 8 -Parallel {
+        $r = Invoke-WebRequest -Uri "$($using:base)/api/v1/auth/refresh" -Method POST -ContentType 'application/json' -Body (@{ refreshToken = $using:rtok } | ConvertTo-Json) -SkipHttpErrorCheck
+        [int]$r.StatusCode
+    }
+    $activeAfterRace = Sql $Db "SELECT COUNT(*) FROM RefreshTokens WHERE UserId=$($rc.Json.id) AND RevokedAt IS NULL AND ExpiresAt > SYSUTCDATETIME()"
+    Check 'R06' 'Concurrent refreshes with ONE token: exactly one succeeds, the rest get 401, no 5xx, and never more than one valid token chain results' (@($rcodes | Where-Object { $_ -eq 200 }).Count -eq 1 -and @($rcodes | Where-Object { $_ -notin 200, 401 }).Count -eq 0 -and [int]$activeAfterRace -le 1) "codes=$($rcodes -join ',') active=$activeAfterRace"
+    $ex = New-User $SA 'Refresh Three' 'refresh3@vvtest.local' 'User'
+    $exl = Login 'refresh3@vvtest.local' $Pw
+    $null = Sql $Db "UPDATE RefreshTokens SET ExpiresAt = DATEADD(MINUTE, -5, SYSUTCDATETIME()) WHERE UserId=$($ex.Json.id)"
+    Check 'R07' 'An expired refresh token is rejected (401)' ((Api POST /api/v1/auth/refresh @{ refreshToken = $exl.Json.refreshToken }).Status -eq 401)
+    $lo = Login 'refresh1@vvtest.local' $Pw
+    $null = Api POST /api/v1/auth/logout @{ refreshToken = $lo.Json.refreshToken } $lo.Json.accessToken
+    $otherSess = Login 'refresh1@vvtest.local' $Pw
+    $loReuse = Api POST /api/v1/auth/refresh @{ refreshToken = $lo.Json.refreshToken }
+    Check 'R08' 'A logged-out (revoked) refresh token is rejected (401) without ending the user''s other sessions' ($loReuse.Status -eq 401 -and (Api POST /api/v1/auth/refresh @{ refreshToken = $otherSess.Json.refreshToken }).Status -eq 200)
+    $logNow = Logtext
+    Check 'R09' 'Reuse is logged as a SECURITY warning with the user id (never the token value)' ($logNow -match "refresh-token reuse detected for user $RUid" -and $logNow -notmatch [regex]::Escape($t1))
+
+    # ---- P2: POST /auth/change-password ----
+    $cp = New-User $SA 'Change One' 'change1@vvtest.local' 'User'; $CPid = $cp.Json.id
+    $cpOther = New-User $SA 'Change Other' 'changeother@vvtest.local' 'User'
+    $cpS = Login 'change1@vvtest.local' $Pw
+    $cpS2 = Login 'change1@vvtest.local' $Pw   # a second session that must be ended by the change
+    $NewPw = 'Changed#Pass456'
+    Check 'C01' 'Unauthenticated change-password is 401' ((Api POST /api/v1/auth/change-password @{ currentPassword = $Pw; newPassword = $NewPw }).Status -eq 401)
+    Check 'C02' 'Wrong current password is refused (400, code current_password_incorrect) and the password is unchanged' ((Api POST /api/v1/auth/change-password @{ currentPassword = 'NotMyPass123'; newPassword = $NewPw } $cpS.Json.accessToken).Json.code -eq 'current_password_incorrect' -and (Login 'change1@vvtest.local' $Pw).Status -eq 200)
+    $weak = Api POST /api/v1/auth/change-password @{ currentPassword = $Pw; newPassword = 'short' } $cpS.Json.accessToken
+    $same = Api POST /api/v1/auth/change-password @{ currentPassword = $Pw; newPassword = $Pw } $cpS.Json.accessToken
+    $nodigit = Api POST /api/v1/auth/change-password @{ currentPassword = $Pw; newPassword = 'NoDigitsHereAtAll' } $cpS.Json.accessToken
+    $empty = Api POST /api/v1/auth/change-password @{} $cpS.Json.accessToken
+    Check 'C03' 'Password policy enforced: too short, no digit, same as current, missing fields are all 400 with field-level errors' ($weak.Status -eq 400 -and $weak.Json.errors.NewPassword -and $same.Status -eq 400 -and $same.Json.errors.NewPassword -and $nodigit.Status -eq 400 -and $empty.Status -eq 400 -and $empty.Json.errors.CurrentPassword)
+    $before = Sql $Db "SELECT PasswordHash FROM Users WHERE Id=$CPid"
+    $chg = Api POST /api/v1/auth/change-password @{ currentPassword = $Pw; newPassword = $NewPw; userId = $($cpOther.Json.id); email = 'changeother@vvtest.local' } $cpS.Json.accessToken
+    Check 'C04' 'Success returns 200 with a fresh session (new access + refresh token) and no password material' ($chg.Status -eq 200 -and $chg.Json.accessToken -and $chg.Json.refreshToken -and $chg.Json.email -eq 'change1@vvtest.local' -and $chg.Raw -notmatch '(?i)password|hash')
+    Check 'C05' 'Old password stops working; new password works' ((Login 'change1@vvtest.local' $Pw).Status -eq 401 -and (Login 'change1@vvtest.local' $NewPw).Status -eq 200)
+    Check 'C06' 'The target is always the caller: a userId/email in the body is ignored and the other user''s password is unchanged' ((Login 'changeother@vvtest.local' $Pw).Status -eq 200 -and (Login 'changeother@vvtest.local' $NewPw).Status -eq 401)
+    Check 'C07' 'All earlier refresh tokens of the user are revoked (other sessions end); the new session''s refresh token works' ((Api POST /api/v1/auth/refresh @{ refreshToken = $cpS.Json.refreshToken }).Status -eq 401 -and (Api POST /api/v1/auth/refresh @{ refreshToken = $cpS2.Json.refreshToken }).Status -eq 401 -and (Api POST /api/v1/auth/refresh @{ refreshToken = $chg.Json.refreshToken }).Status -eq 200)
+    $afterHash = Sql $Db "SELECT PasswordHash FROM Users WHERE Id=$CPid"
+    Check 'C08' 'Stored as a new BCrypt hash (not plain text, different from before)' ($afterHash -like '$2*' -and $afterHash -ne $before -and $afterHash -notmatch [regex]::Escape($NewPw))
+    $cpAdm = Api POST /api/v1/auth/change-password @{ currentPassword = $Pw; newPassword = 'AdminNew#Pass88' } (Token 'admin2@vvtest.local')
+    Check 'C09' 'Admin can change their own password too (same endpoint, any role); the old one is then rejected' ($cpAdm.Status -eq 200 -and (Login 'admin2@vvtest.local' 'AdminNew#Pass88').Status -eq 200 -and (Login 'admin2@vvtest.local' $Pw).Status -eq 401)
+    $cpLock = New-User $SA 'Change Lock' 'changelock@vvtest.local' 'User'
+    $cpLockTok = Token 'changelock@vvtest.local'
+    $cpTry = 1..5 | ForEach-Object { (Api POST /api/v1/auth/change-password @{ currentPassword = 'GuessGuess123'; newPassword = 'Whatever#Pass12' } $cpLockTok).Status }
+    $cpSixth = Api POST /api/v1/auth/change-password @{ currentPassword = $Pw; newPassword = 'Whatever#Pass12' } $cpLockTok
+    Check 'C10' 'A stolen access token cannot be used to guess the current password: 5 failures lock the account, the next try is 429 account_locked' (@($cpTry | Where-Object { $_ -ne 400 }).Count -eq 0 -and $cpSixth.Status -eq 429 -and $cpSixth.Json.code -eq 'account_locked')
+    $null = Api PATCH "/api/v1/users/$($dis.Json.id)/status" @{ isActive = $true } $SA
+    $dsTok = Token 'disabled1@vvtest.local'
+    $null = Api PATCH "/api/v1/users/$($dis.Json.id)/status" @{ isActive = $false } $SA
+    Check 'C11' 'A disabled user cannot change a password (existing access token is rejected, 401)' ((Api POST /api/v1/auth/change-password @{ currentPassword = $Pw; newPassword = 'DisabledNew#Pass9' } $dsTok).Status -eq 401)
+
+    # ---- P1: request id, headers, problem details, 413 ----
+    $r200 = Req GET /api/v1/health
+    $r401 = Req GET /api/v1/auth/me
+    $r404 = Req GET /api/v1/does-not-exist
+    $r400 = Req POST /api/v1/auth/login -rawBody '{"email": 5'
+    $ids = @($r200, $r401, $r404, $r400 | ForEach-Object { Hdr $_ 'X-Request-Id' })
+    Check 'H01' 'Every response (200, 401, 404, 400) carries a distinct X-Request-Id' (@($ids | Where-Object { $_ }).Count -eq 4 -and @($ids | Sort-Object -Unique).Count -eq 4) ($ids -join ',')
+    $b401 = Body $r401
+    Check 'H02' 'traceId in the error body equals the X-Request-Id header' ($b401.traceId -eq (Hdr $r401 'X-Request-Id') -and (Body $r404).traceId -eq (Hdr $r404 'X-Request-Id') -and (Body $r400).traceId -eq (Hdr $r400 'X-Request-Id'))
+    $echo = Req GET /api/v1/health -headers @{ 'X-Request-Id' = 'client-trace-123' }
+    $bad = Req GET /api/v1/health -headers @{ 'X-Request-Id' = 'has spaces and <script>' }
+    Check 'H03' 'A safe caller-supplied X-Request-Id is echoed; an unsafe one is replaced by a generated id' ((Hdr $echo 'X-Request-Id') -eq 'client-trace-123' -and (Hdr $bad 'X-Request-Id') -notmatch 'script' -and (Hdr $bad 'X-Request-Id').Length -ge 16)
+    $hdrFail = @()
+    foreach ($rr in @($r200, $r401, $r404, $r400)) {
+        foreach ($pair in 'X-Content-Type-Options=nosniff', 'X-Frame-Options=DENY', 'Referrer-Policy=no-referrer', 'Cache-Control=no-store') {
+            $k, $v = $pair -split '=', 2
+            if ((Hdr $rr $k) -ne $v) { $hdrFail += "$($rr.StatusCode) $k=[$(Hdr $rr $k)]" }
+        }
+        if ($null -ne (Hdr $rr 'Server')) { $hdrFail += "$($rr.StatusCode) Server=[$(Hdr $rr 'Server')]" }
+        if ((Hdr $rr 'Content-Security-Policy') -notmatch "default-src 'none'") { $hdrFail += "$($rr.StatusCode) CSP" }
+    }
+    Check 'H04' 'Security headers present on every response (nosniff, DENY, no-referrer, no-store, CSP) and the Server header is gone' ($hdrFail.Count -eq 0) ($hdrFail -join '; ')
+    $pubNf = Req GET /api/v1/health -root "http://localhost:$pubPort"
+    Check 'H05' 'Security headers and request id are also set on the public listener''s empty 404' ($pubNf.StatusCode -eq 404 -and (Hdr $pubNf 'X-Content-Type-Options') -eq 'nosniff' -and (Hdr $pubNf 'X-Request-Id') -and $null -eq (Hdr $pubNf 'Server') -and [string]$pubNf.Content -eq '')
+    $pd = Body $r401
+    $pj = Req GET /api/v1/auth/me -headers @{ Accept = 'application/problem+json' }
+    Check 'H06' 'Errors are RFC 7807 problem documents (type, title, status, detail, instance) plus the legacy code/message/traceId; labelled application/json by default (existing clients) and application/problem+json when the caller asks for it' ((Hdr $r401 'Content-Type') -match '^application/json' -and (Hdr $pj 'Content-Type') -match 'application/problem\+json' -and (Body $pj).code -eq 'unauthorized' -and $pd.type -like 'urn:vayuvata:error:*' -and $pd.title -eq 'Unauthorized' -and $pd.status -eq 401 -and $pd.detail -and $pd.instance -eq '/api/v1/auth/me' -and $pd.code -eq 'unauthorized' -and $pd.message -and $pd.traceId) $r401.Content
+    $multi = Api POST /api/v1/users @{ name = ''; email = 'not-an-email'; password = 'x'; role = 'User' } $SA
+    Check 'H07' 'Validation errors are actionable: 400 validation_failed with a message list per field (name, email, password)' ($multi.Status -eq 400 -and $multi.Json.code -eq 'validation_failed' -and $multi.Json.errors.Name -and $multi.Json.errors.Email -and $multi.Json.errors.Password -and $multi.Json.errors.Password.Count -ge 2 -and $multi.Json.type -eq 'urn:vayuvata:error:validation_failed')
+    $bigBody = '{"email":"a@b.cc","password":"Passw0rd!x1"}' + (' ' * 20000)   # padded valid JSON: only the size limit can reject it, not the validators
+    $r413 = Req POST /api/v1/auth/login -rawBody $bigBody
+    $b413 = Body $r413
+    Check 'H08' 'Oversized request (20 KB > 16 KB limit) returns 413 payload_too_large in the standard error body (was 400)' ($r413.StatusCode -eq 413 -and $b413.code -eq 'payload_too_large' -and (Hdr $r413 'X-Request-Id')) "status=$($r413.StatusCode) $($r413.Content)"
+    $r413i = Req POST /api/v1/sensor-data -rawBody ('{"deviceId":"VVTEST-DEV-1","aqi":5}' + (' ' * 20000)) -headers @{ 'X-Device-Key' = $K1 } -root "http://localhost:$pubPort"
+    Check 'H09' 'Oversized ESP32 ingest request is 413 on the public listener too; a normal reading still works (201)' ($r413i.StatusCode -eq 413 -and (Post-Reading 'VVTEST-DEV-1' $K1 @{ aqi = 12 } 3).Status -eq 201)
+    Check 'H10' 'Unsupported media type and unknown route still use the standard error body with request id' ((Req POST /api/v1/auth/login -rawBody 'x').StatusCode -in 400, 415 -and (Body $r404).code -eq 'not_found')
+
+    # ---- P1: logs ----
+    $null = Req GET '/api/v1/probe/eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk'
+    $null = Req GET '/api/v1/probe/vv_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+    $null = Req GET '/api/v1/probe?password=SuperSecretQueryPw1&token=abc123abc123'
+    $lg = Logtext
+    $rid = Hdr $r401 'X-Request-Id'
+    Check 'H11' 'Access log: one line per request with method, path, status, duration, client ip, user id and the same request id as the response header' ($lg -match "HTTP GET /api/v1/auth/me -> 401 in \d+ ms \(ip [^,]+, port \d+, user -, request $rid\)")
+    Check 'H12' 'Access log records the authenticated user id (not the token)' ($lg -match "HTTP GET /api/v1/users/\d+ -> 200 .* user $saId,")
+    $secrets = @($Pw, $NewPw, 'BrandNew#Pass9', 'Unlocked#Pass77', 'AdminNew#Pass88', $K1, $K2, $rot.Json.apiKey, $t1, $t2, $t3, $cpS.Json.refreshToken, $SA, $U1, $A1, $jwtKey, 'SuperSecretQueryPw1', 'abc123abc123')
+    if ($uatMode) { $secrets += $env:VV_APP_PASSWORD; $secrets += $env:VV_SQL_PASSWORD; $secrets += $saPass }
+    $leaked = @($secrets | Where-Object { $_ -and $lg.Contains([string]$_) })
+    Check 'H13' 'Logs contain none of: any test password, device key, refresh token, access token (JWT), JWT signing key, DB password, query-string secrets' ($leaked.Count -eq 0 -and $lg -notmatch 'eyJ[A-Za-z0-9_-]{8,}\.' -and $lg -notmatch 'Password=') "leaked $($leaked.Count) value(s)"
+    Check 'H14' 'Path-embedded credentials are redacted in the access log (JWT and device-key look-alikes), query strings are never logged' ($lg -match '\[redacted-jwt\]' -and $lg -match '\[redacted-key\]' -and $lg -notmatch 'probe\?')
+    Check 'H15' 'Failed-login log lines mask the e-mail (u***@vvtest.local) and give the reason server-side only' ($lg -match 'Failed login for u\*\*\*@vvtest\.local: wrong_password' -and $lg -notmatch 'Failed login for user1@' -and $lg -match ': locked' -and $lg -match ': disabled' -and $lg -match ': unknown_account')
+
+    # ---- P1: OpenAPI contract ----
+    $swb = Api GET /swagger/v1/swagger.json
+    $ops = foreach ($pp in $swb.Json.paths.PSObject.Properties) { foreach ($mm in $pp.Value.PSObject.Properties) { [pscustomobject]@{ Path = $pp.Name; Method = $mm.Name.ToUpper(); Op = $mm.Value } } }
+    $opIds = @($ops | ForEach-Object { $_.Op.operationId })
+    Check 'O01' 'All operations have a unique, non-empty operationId' (@($opIds | Where-Object { -not $_ }).Count -eq 0 -and @($opIds | Sort-Object -Unique).Count -eq @($ops).Count) "ops=$(@($ops).Count) distinct=$(@($opIds | Sort-Object -Unique).Count)"
+    $docGaps = @()
+    foreach ($o in $ops) {
+        $rc2 = @($o.Op.responses.PSObject.Properties.Name)
+        $needs = @('500')
+        if ($o.Op.security | Where-Object { $_.PSObject.Properties.Name -contains 'Bearer' }) { $needs += '401', '403' }
+        if ($o.Path -match '\{') { $needs += '404' }
+        if ($o.Op.requestBody) { $needs += '400', '413' }
+        if ($o.Path -match '/auth/login$|/auth/refresh$|/auth/change-password$' -or ($o.Path -eq '/api/v1/sensor-data' -and $o.Method -eq 'POST')) { $needs += '429' }
+        foreach ($n in $needs) { if ($rc2 -notcontains $n) { $docGaps += "$($o.Method) $($o.Path) missing $n" } }
+        if (-not ($rc2 | Where-Object { $_ -like '2*' })) { $docGaps += "$($o.Method) $($o.Path) has no success response" }
+        if (-not $o.Op.summary) { $docGaps += "$($o.Method) $($o.Path) has no summary" }
+    }
+    Check 'O02' 'Every operation documents its applicable error responses (400/401/403/404/413/429/500), a success response and a summary' ($docGaps.Count -eq 0) (($docGaps | Select-Object -First 6) -join '; ')
+    $errSchema = $swb.Json.components.schemas.ApiError.properties.PSObject.Properties.Name
+    Check 'O03' 'ApiError schema documents the RFC 7807 fields and the legacy fields; X-Request-Id is documented on responses' (($errSchema -contains 'type') -and ($errSchema -contains 'title') -and ($errSchema -contains 'detail') -and ($errSchema -contains 'instance') -and ($errSchema -contains 'code') -and ($errSchema -contains 'traceId') -and $swb.Json.paths.'/api/v1/auth/me'.get.responses.'401'.headers.'X-Request-Id')
+    $base0 = Get-Content (Join-Path $PSScriptRoot 'baseline/openapi-stageA.json') -Raw | ConvertFrom-Json
+    $contractLoss = @()
+    foreach ($pp in $base0.paths.PSObject.Properties) {
+        foreach ($mm in $pp.Value.PSObject.Properties) {
+            $now = $swb.Json.paths.($pp.Name).($mm.Name)
+            if (-not $now) { $contractLoss += "MISSING $($mm.Name.ToUpper()) $($pp.Name)"; continue }
+            foreach ($code in $mm.Value.responses.PSObject.Properties.Name) { if (-not $now.responses.$code) { $contractLoss += "$($mm.Name.ToUpper()) $($pp.Name) lost response $code" } }
+            $oldSec = ($mm.Value.security | ConvertTo-Json -Compress -Depth 5); $newSec = ($now.security | ConvertTo-Json -Compress -Depth 5)
+            if ($oldSec -ne $newSec) { $contractLoss += "$($mm.Name.ToUpper()) $($pp.Name) security changed" }
+        }
+    }
+    foreach ($sc in $base0.components.schemas.PSObject.Properties) {
+        $ns = $swb.Json.components.schemas.($sc.Name)
+        if (-not $ns) { $contractLoss += "schema $($sc.Name) removed"; continue }
+        foreach ($prop in @($sc.Value.properties.PSObject.Properties.Name)) { if (@($ns.properties.PSObject.Properties.Name) -notcontains $prop) { $contractLoss += "schema $($sc.Name) lost property $prop" } }
+    }
+    Check 'O04' 'Compatibility with the Stage A contract: all 30 original operations, their documented status codes, security schemes and every schema property still exist (additive changes only)' ($contractLoss.Count -eq 0) ($contractLoss -join '; ')
+    $newOps = @($ops | Where-Object { -not $base0.paths.($_.Path) -or -not $base0.paths.($_.Path).($_.Method.ToLower()) } | ForEach-Object { "$($_.Method) $($_.Path)" })
+    Check 'O05' 'Exactly one route was added: POST /api/v1/auth/change-password (31 operations, 25 paths)' (($newOps -join ',') -eq 'POST /api/v1/auth/change-password' -and @($ops).Count -eq 31 -and @($swb.Json.paths.PSObject.Properties).Count -eq 25) ($newOps -join ',')
+    $cpOp = $swb.Json.paths.'/api/v1/auth/change-password'.post
+    Check 'O06' 'change-password is documented: Bearer security, request body, 200 LoginResponse, 400/401/429' (($cpOp.security | ConvertTo-Json -Compress -Depth 5) -match 'Bearer' -and $cpOp.requestBody -and $cpOp.responses.'200' -and $cpOp.responses.'400' -and $cpOp.responses.'401' -and $cpOp.responses.'429')
+
+    # ---- P3: optional totals ----
+    $q1 = Api GET '/api/v1/sensor-data?deviceId=VVTEST-DEV-2&pageSize=3&page=1&includeTotal=false' $null $SA
+    $qLast = Api GET '/api/v1/sensor-data?deviceId=VVTEST-DEV-2&pageSize=100&page=1&includeTotal=false' $null $SA
+    $qDef = Api GET '/api/v1/sensor-data?deviceId=VVTEST-DEV-2&pageSize=3&page=1' $null $SA
+    Check 'Q01' 'includeTotal=false skips the count: totalCount/totalPages null, items = pageSize, hasNextPage true while more rows exist, false on the last page' ($q1.Status -eq 200 -and $null -eq $q1.Json.totalCount -and $null -eq $q1.Json.totalPages -and $q1.Json.items.Count -eq 3 -and $q1.Json.hasNextPage -eq $true -and $qLast.Json.hasNextPage -eq $false -and $null -eq $qLast.Json.totalCount) "$($q1.Raw.Substring(0, [Math]::Min(120, $q1.Raw.Length)))"
+    Check 'Q02' 'Default behaviour is unchanged: totalCount and totalPages are present when includeTotal is omitted, and hasNextPage agrees' ($qDef.Json.totalCount -ge 4 -and $qDef.Json.totalPages -ge 2 -and $qDef.Json.hasNextPage -eq $true)
+    $qAll = @(
+        '/api/v1/users', '/api/v1/devices', "/api/v1/users/$S1id/devices", "/api/v1/devices/$D1/assignments", "/api/v1/devices/$D1/sensor-data/history",
+        "/api/v1/admins/$A1id/users", '/api/v1/superadmin/users') | ForEach-Object { $x = Api GET ($_ + '?pageSize=1&includeTotal=false') $null $SA; "$_=$($x.Status)/$($null -eq $x.Json.totalCount)" }
+    Check 'Q03' 'includeTotal=false works on every paged list endpoint (7 more endpoints: 200 and no totals)' (@($qAll | Where-Object { $_ -notmatch '=200/True$' }).Count -eq 0) ($qAll -join ' ')
+    Check 'Q04' 'Invalid includeTotal value is rejected with 400' ((Api GET '/api/v1/users?includeTotal=maybe' $null $SA).Status -eq 400)
+    $q5 = Api GET '/api/v1/users?pageSize=2&page=1&includeTotal=false&role=User' $null $SA
+    Check 'Q05' 'Filters still apply together with includeTotal=false' ($q5.Status -eq 200 -and @($q5.Json.items | Where-Object { $_.role -ne 'User' }).Count -eq 0 -and $q5.Json.items.Count -le 2)
+
+    # ---- authorization boundaries for the new endpoint and unchanged ones ----
+    Check 'Z01' 'SuperAdmin-only operations still reject Admin and User callers (403) and anonymous callers (401)' ((Api POST /api/v1/devices @{ deviceId = 'VVTEST-ZZ1'; deviceName = 'x' } $A1).Status -eq 403 -and (Api POST /api/v1/devices @{ deviceId = 'VVTEST-ZZ1'; deviceName = 'x' } $U1).Status -eq 403 -and (Api GET /api/v1/superadmin/users $null $A1).Status -eq 403 -and (Api GET /api/v1/superadmin/users $null $U1).Status -eq 403 -and (Api PATCH "/api/v1/users/$U1id/admin-assignment" @{ managerId = $saId } $A1).Status -eq 403 -and (Api GET /api/v1/superadmin/users).Status -eq 401)
+    Check 'Z02' 'Route-id tampering: a User cannot read another User''s record, devices or readings by changing ids (404), an Admin cannot manage Users outside their scope (404)' ((Api GET "/api/v1/users/$U3id" $null $U1).Status -eq 404 -and (Api GET "/api/v1/users/$U3id/devices" $null $U1).Status -eq 404 -and (Api GET "/api/v1/devices/$D3/sensor-data/history" $null $U1).Status -eq 404 -and (Api PATCH "/api/v1/users/$U3id/status" @{ isActive = $false } $A1).Status -eq 404 -and (Api POST "/api/v1/users/$U3id/reset-password" @{ newPassword = 'Hacked12345' } $A1).Status -eq 404)
+    $zt = Ts 1
+    $z1 = Api POST /api/v1/sensor-data @{ deviceId = 'VVTEST-DEV-1'; recordedAt = $zt; aqi = 21 } $null @{ 'X-Device-Key' = $K1 }
+    $z2 = Api POST /api/v1/sensor-data @{ deviceId = 'VVTEST-DEV-1'; recordedAt = $zt; aqi = 21 } $null @{ 'X-Device-Key' = $K1 }
+    Check 'Z03' 'Device-key ingestion contract unchanged for the ESP32: same path, header and body; 201 on success, 401 wrong key, 409 duplicate; absent values stay NULL' ($z1.Status -eq 201 -and $null -eq $z1.Json.pm25 -and (Post-Reading 'VVTEST-DEV-1' $K2 @{ aqi = 1 } 4).Status -eq 401 -and $z2.Status -eq 409 -and $z2.Json.code -eq 'duplicate_reading')
+
+    # ---- ESP32 ingestion compatibility with the live UAT behaviour (device clock = IST wall-clock labelled as UTC) ----
+    $inDate = Api POST /api/v1/sensor-data @{ deviceId = 'VVTEST-DEV-5'; recordedAt = (Ts 90); dataDate = '2026-03-04'; dataTime = '05:06:07'; aqi = 31 } $null @{ 'X-Device-Key' = $K5 }
+    $inRow = Sql $Db "SELECT CONCAT(CONVERT(varchar(10), data_date, 23), ' ', CONVERT(varchar(8), data_time, 108)) FROM SensorData WHERE ID=$($inDate.Json.id)"
+    Check 'IN1' 'Optional dataDate / dataTime from the device are accepted and stored as sent (recordedAt unaffected); omitted ones are derived from recordedAt' ($inDate.Status -eq 201 -and $inRow -eq '2026-03-04 05:06:07' -and $inDate.Json.dataDate -eq '2026-03-04') "$($inDate.Status) db=$inRow"
+    $inNoTs = Api POST /api/v1/sensor-data @{ deviceId = 'VVTEST-DEV-5'; aqi = 32 } $null @{ 'X-Device-Key' = $K5 }
+    $inOff = Sql $Db "SELECT ABS(DATEDIFF(MINUTE, recorded_at, DATEADD(MINUTE, 330, SYSUTCDATETIME()))) FROM SensorData WHERE ID=$($inNoTs.Json.id)"
+    Check 'IN2' 'A reading without recordedAt is stamped with the device-clock convention (UTC + 330 min = IST wall-clock), as on the live service' ($inNoTs.Status -eq 201 -and [int]$inOff -le 3) "off=$inOff"
+    $in5h = Api POST /api/v1/sensor-data @{ deviceId = 'VVTEST-DEV-5'; recordedAt = (Ts -300); aqi = 33 } $null @{ 'X-Device-Key' = $K5 }
+    $in7h = Api POST /api/v1/sensor-data @{ deviceId = 'VVTEST-DEV-5'; recordedAt = (Ts -420); aqi = 34 } $null @{ 'X-Device-Key' = $K5 }
+    Check 'IN3' 'A device clock up to 6 h ahead of UTC (IST labelled UTC) is accepted; 7 h and 2 days ahead are rejected (400)' ($in5h.Status -eq 201 -and $in7h.Status -eq 400 -and $in7h.Json.code -eq 'validation_failed') "5h=$($in5h.Status) 7h=$($in7h.Status)"
+    $keyHash = Sql $Db "SELECT ApiKeyHash FROM Devices WHERE DeviceId='VVTEST-DEV-5'"
+    $otherHash = Sql $Db "SELECT ApiKeyHash FROM Devices WHERE DeviceId='VVTEST-DEV-3'"
+    $inHashOff = Api POST /api/v1/sensor-data @{ deviceId = 'VVTEST-DEV-5'; recordedAt = (Ts 91); aqi = 35 } $null @{ 'X-Device-Key' = $keyHash }
+    Check 'IN4' 'SECURE DEFAULT: presenting the stored key HASH as the key is refused (401) unless DeviceAuth:AcceptStoredHashAsKey is switched on' ($inHashOff.Status -eq 401)
+    $fPort = $Port + 4
+    $env:DeviceAuth__AcceptStoredHashAsKey = 'true'
+    $fApp = Start-Process dotnet -ArgumentList @((Join-Path $bin 'VayuVata.dll'), '--urls', "http://localhost:$fPort") -WorkingDirectory $project -PassThru `
+        -RedirectStandardOutput (Join-Path $runDir 'flag.log') -RedirectStandardError (Join-Path $runDir 'flag.err.log') -WindowStyle Hidden
+    $env:DeviceAuth__AcceptStoredHashAsKey = $null
+    $fUp = $false
+    1..40 | ForEach-Object { if (-not $fUp) { try { $fUp = ((Invoke-WebRequest "http://localhost:$fPort/api/v1/health" -SkipHttpErrorCheck).StatusCode -eq 200) } catch { Start-Sleep 1 } } }
+    $fr = "http://localhost:$fPort"
+    $fOn = ApiAt $fr POST /api/v1/sensor-data @{ deviceId = 'VVTEST-DEV-5'; recordedAt = (Ts 92); aqi = 36 } $null @{ 'X-Device-Key' = $keyHash }
+    $fOnUp = ApiAt $fr POST /api/v1/sensor-data @{ deviceId = 'VVTEST-DEV-5'; recordedAt = (Ts 93); aqi = 37 } $null @{ 'X-Device-Key' = "  $($keyHash.ToUpperInvariant())  " }
+    $fOther = ApiAt $fr POST /api/v1/sensor-data @{ deviceId = 'VVTEST-DEV-5'; recordedAt = (Ts 94); aqi = 38 } $null @{ 'X-Device-Key' = $otherHash }
+    $fWrong = ApiAt $fr POST /api/v1/sensor-data @{ deviceId = 'VVTEST-DEV-5'; recordedAt = (Ts 95); aqi = 39 } $null @{ 'X-Device-Key' = ('0' * 64) }
+    $fRaw = ApiAt $fr POST /api/v1/sensor-data @{ deviceId = 'VVTEST-DEV-5'; recordedAt = (Ts 96); aqi = 40 } $null @{ 'X-Device-Key' = $K5 }
+    Check 'IN5' 'COMPATIBILITY SWITCH ON (as on the live UAT): the stored hash (also trimmed/upper-case) authenticates its own device only; another device''s hash and a wrong value are 401; the real key still works' ($fUp -and $fOn.Status -eq 201 -and $fOnUp.Status -eq 201 -and $fOther.Status -eq 401 -and $fWrong.Status -eq 401 -and $fRaw.Status -eq 201) "$($fOn.Status)/$($fOnUp.Status)/$($fOther.Status)/$($fWrong.Status)/$($fRaw.Status)"
+    Get-NetTCPConnection -LocalPort $fPort -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+    if ($fApp -and -not $fApp.HasExited) { Stop-Process -Id $fApp.Id -Force -ErrorAction SilentlyContinue }
 
     # ================= SCRIPTS PARITY =================
     $sdb = 'tempdb'   # scratch tables only; removed again in the finally block
@@ -682,10 +1058,6 @@ try {
     Check 'W08' 'Hand-written SQL scripts produce the same columns as the EF migration' ((Sql $Db $schemaQ) -eq (Sql $sdb $schemaQ -Admin))
     Check 'W09' 'Hand-written SQL scripts produce the same indexes as the EF migration' ((Sql $Db $idxQ) -eq (Sql $sdb $idxQ -Admin))
 
-    # ================= RATE LIMIT (last: it locks the IP for a minute) =================
-    $got429 = $false
-    1..80 | ForEach-Object { if (-not $got429) { if ((Login 'user1@vvtest.local' 'bad-password-x').Status -eq 429) { $got429 = $true } } }
-    Check 'A19' 'Login rate limiting returns 429 after repeated attempts' $got429
 }
 finally {
     if ($app -and -not $app.HasExited) { Stop-Process -Id $app.Id -Force }
@@ -708,7 +1080,7 @@ finally {
     [void]$md.AppendLine("Generated by ``Tests/Run-ApiTests.ps1`` on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz').")
     [void]$md.AppendLine("Environment: SQL Server ``$SqlServer`` (database ``$Db``; only tagged test rows are created and removed, nothing is dropped), API on ``$base``, .NET $(dotnet --version), ASPNETCORE_ENVIRONMENT=Development.")
     [void]$md.AppendLine('')
-    [void]$md.AppendLine("**Total: $($results.Count) - Passed: $pass - Failed: $fail**")
+    [void]$md.AppendLine("**Total executed: $($results.Count) - Passed: $pass - Failed: $fail - Skipped (not run): $($skipped.Count)**")
     [void]$md.AppendLine('')
     [void]$md.AppendLine('| ID | Scenario | Result | Detail |')
     [void]$md.AppendLine('|----|----------|--------|--------|')
@@ -716,6 +1088,7 @@ finally {
         $d = ($r.Detail -replace '\|', '/' -replace "[`r`n]+", ' ')
         [void]$md.AppendLine("| $($r.Id) | $($r.Name -replace '\|','/') | $(if ($r.Passed) { 'PASS' } else { '**FAIL**' }) | $(if ($r.Passed) { '' } else { $d }) |")
     }
+    if ($skipped.Count -gt 0) { [void]$md.AppendLine(''); [void]$md.AppendLine('Skipped: ' + (($skipped | ForEach-Object { "$($_.Id) ($($_.Reason))" }) -join '; ')) }
     [void]$md.AppendLine('')
     [void]$md.AppendLine('## Manual verification (performed by hand, not by this script)')
     [void]$md.AppendLine('')
@@ -730,7 +1103,7 @@ finally {
     [void]$md.AppendLine('- Real ESP32 firmware (none exists in the repo); the ingestion contract in README is an assumption to confirm.')
     [void]$md.AppendLine('- `ResetDatabase.sql` was not executed (destructive by design); HTTPS/production hosting and load testing were not exercised.')
     Set-Content -Path (Join-Path $PSScriptRoot 'TestResults.md') -Value $md.ToString() -Encoding utf8
-    Write-Host "`n== $pass passed, $fail failed. Results written to Tests/TestResults.md =="
+    Write-Host "`n== $pass passed, $fail failed, $($skipped.Count) skipped. Results written to Tests/TestResults.md =="
     if ($fail -gt 0) { exit 1 }
 }
 

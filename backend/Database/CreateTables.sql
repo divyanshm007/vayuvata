@@ -28,6 +28,9 @@ CREATE TABLE dbo.Users (
     CreatedAt     datetime2(3)  NOT NULL CONSTRAINT DF_Users_CreatedAt DEFAULT SYSUTCDATETIME(),
     UpdatedAt     datetime2(3)  NULL,
     LastLoginAt   datetime2(3)  NULL,
+    FailedLoginCount  int       NOT NULL CONSTRAINT DF_Users_FailedLoginCount DEFAULT 0,   -- consecutive wrong passwords (reset on success)
+    LastFailedLoginAt datetime2(3) NULL,
+    LockoutUntil      datetime2(3) NULL,                                              -- temporary lockout; expires on its own
     CONSTRAINT PK_Users PRIMARY KEY (Id),
     CONSTRAINT CK_Users_Role CHECK (Role IN ('SuperAdmin','Admin','User')),
     CONSTRAINT CK_Users_Manager CHECK ((Role = 'User' AND ManagerId IS NOT NULL AND ManagerId <> Id) OR (Role IN ('SuperAdmin','Admin') AND ManagerId IS NULL)),
@@ -95,6 +98,8 @@ CREATE TABLE dbo.RefreshTokens (
     CreatedAt  datetime2(3) NOT NULL,
     ExpiresAt  datetime2(3) NOT NULL,
     RevokedAt  datetime2(3) NULL,
+    FamilyId   uniqueidentifier NOT NULL CONSTRAINT DF_RefreshTokens_FamilyId DEFAULT NEWID(),   -- all tokens descended from one login
+    ReplacedByTokenId int NULL,                    -- set when rotated; a rotated token presented again revokes its family
     CONSTRAINT PK_RefreshTokens PRIMARY KEY (Id),
     CONSTRAINT FK_RefreshTokens_Users_UserId FOREIGN KEY (UserId) REFERENCES dbo.Users (Id)
 );

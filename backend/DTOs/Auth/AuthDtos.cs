@@ -36,3 +36,15 @@ public class ProfileResponse
     public DateTime? LastLoginAt { get; set; }
 }
 
+
+/// <summary>
+/// Password policy: 10-100 characters with at least one uppercase letter, one lowercase letter and one digit,
+/// and different from the current password.
+/// </summary>
+public class ChangePasswordRequest
+{
+    /// <example>OldPassw0rd1</example>
+    public string CurrentPassword { get; set; } = "";
+    /// <example>NewPassw0rd2</example>
+    public string NewPassword { get; set; } = "";
+}

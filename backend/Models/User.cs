@@ -26,6 +26,12 @@ public class User
     public DateTime? UpdatedAt { get; set; }
     public DateTime? LastLoginAt { get; set; }
 
+    /// <summary>Consecutive failed password attempts within the lockout window (reset on success).</summary>
+    public int FailedLoginCount { get; set; }
+    public DateTime? LastFailedLoginAt { get; set; }
+    /// <summary>While in the future, login is refused (temporary lockout; expires on its own).</summary>
+    public DateTime? LockoutUntil { get; set; }
+
     public List<DeviceAssignment> Assignments { get; set; } = [];
 }
 

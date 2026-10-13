@@ -17,7 +17,8 @@ public class DeviceConfiguration : IEntityTypeConfiguration<Device>
         b.Property(d => d.IsActive).HasDefaultValue(true);
         b.Property(d => d.CreatedAt).HasColumnType("datetime2(3)").HasDefaultValueSql("SYSUTCDATETIME()");
         b.Property(d => d.UpdatedAt).HasColumnType("datetime2(3)");
-        b.HasIndex(d => d.DeviceId).IsUnique();
+        // Uniqueness of DeviceId is enforced by the alternate key AK_Devices_DeviceId (also the target of the SensorData FK);
+        // a second unique index on the same column was redundant and has been dropped.
     }
 }
 

@@ -5,12 +5,13 @@ namespace VayuVata.Validators;
 
 public class CreateSensorDataValidator : AbstractValidator<CreateSensorDataRequest>
 {
-    public CreateSensorDataValidator()
+    public CreateSensorDataValidator(Microsoft.Extensions.Options.IOptions<VayuVata.Services.IngestOptions> ingest)
     {
+        var tolerance = Math.Max(5, ingest.Value.FutureToleranceMinutes);
         RuleFor(x => x.DeviceId).NotEmpty().MaximumLength(64);
-        RuleFor(x => x.RecordedAt).Must(t => t == null || t.Value.ToUniversalTime() <= DateTime.UtcNow.AddMinutes(5))
+        RuleFor(x => x.RecordedAt).Must(t => t == null || t.Value <= DateTime.UtcNow.AddMinutes(tolerance))
             .WithMessage("RecordedAt cannot be in the future.")
-            .Must(t => t == null || t.Value.ToUniversalTime() >= new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc))
+            .Must(t => t == null || t.Value >= new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc))
             .WithMessage("RecordedAt is implausibly old.");
         RuleFor(x => x.Aqi).InclusiveBetween(0, 1000);
         RuleFor(x => x.AqiStatus).MaximumLength(32);

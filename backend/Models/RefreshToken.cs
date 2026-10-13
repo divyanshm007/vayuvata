@@ -12,5 +12,10 @@ public class RefreshToken
     public DateTime ExpiresAt { get; set; }
     public DateTime? RevokedAt { get; set; }
 
+    /// <summary>All tokens descended from one login share a family; reuse of a rotated token revokes the whole family.</summary>
+    public Guid FamilyId { get; set; } = Guid.NewGuid();
+    /// <summary>Set when this token was exchanged for a new one (rotation). Null for logout/admin revocations.</summary>
+    public int? ReplacedByTokenId { get; set; }
+
     public bool IsUsable(DateTime now) => RevokedAt == null && ExpiresAt > now;
 }

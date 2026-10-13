@@ -13,14 +13,38 @@ using VayuVata.Helpers;
 using VayuVata.Middleware;
 using VayuVata.Services;
 
+// Schema changes are a separate, explicit step (never part of normal start-up): `VayuVata --migrate` / `--migration-status`.
+if (MigrationRunner.IsMigrationCommand(args))
+{
+    var cli = WebApplication.CreateBuilder([]);
+    return await MigrationRunner.RunAsync(args, cli.Configuration, cli.Environment.EnvironmentName);
+}
+
 var builder = WebApplication.CreateBuilder(args);
 var config = builder.Configuration;
+
+// The framework's "Request starting/finished" lines contain the full URL INCLUDING the query string, which can carry secrets.
+// Our own RequestContextMiddleware writes the access log instead (path only, redacted), so keep the framework's at Warning regardless of environment.
+builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+
+// Hide the "Server: Kestrel" header and enforce the request-body cap. Kestrel does NOT bind Kestrel:Limits:* from configuration on its own,
+// so the (optional) configured value is read and applied explicitly; default 16 KB. Larger bodies are answered with 413.
+builder.WebHost.ConfigureKestrel(k =>
+{
+    k.AddServerHeader = false;
+    k.Limits.MaxRequestBodySize = config.GetValue<long?>("Kestrel:Limits:MaxRequestBodySize") ?? 16 * 1024;
+});
 
 // ---- Configuration (secrets come from env vars / user-secrets, never source control) ----
 var jwtOptions = config.GetSection("Jwt").Get<JwtOptions>() ?? new JwtOptions();
 if (string.IsNullOrWhiteSpace(jwtOptions.Key) || jwtOptions.Key.Length < 32)
     throw new InvalidOperationException("Jwt:Key must be set (>= 32 chars) via environment variable Jwt__Key or user-secrets.");
 builder.Services.Configure<JwtOptions>(config.GetSection("Jwt"));
+builder.Services.Configure<AuthOptions>(config.GetSection("Auth"));
+builder.Services.Configure<IngestOptions>(config.GetSection("Ingest"));
+builder.Services.Configure<DeviceAuthOptions>(config.GetSection("DeviceAuth"));
+builder.Services.Configure<RefreshTokenCleanupOptions>(config.GetSection("RefreshTokens:Cleanup"));
+builder.Services.AddHostedService<RefreshTokenCleanupService>();
 
 // ---- Database ----
 builder.Services.AddDbContext<VayuVataDbContext>(o =>
@@ -65,21 +89,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             OnChallenge = async ctx =>
             {
                 ctx.HandleResponse();
-                ctx.Response.StatusCode = 401;
-                await ctx.Response.WriteAsJsonAsync(new ApiError
-                {
-                    Status = 401, Code = "unauthorized", Message = "Missing, invalid or expired access token.",
-                    TraceId = ctx.HttpContext.TraceIdentifier,
-                });
+                await ctx.Response.WriteApiErrorAsync(ApiError.Create(ctx.HttpContext, 401, "unauthorized", "Missing, invalid or expired access token."));
             },
             OnForbidden = async ctx =>
             {
-                ctx.Response.StatusCode = 403;
-                await ctx.Response.WriteAsJsonAsync(new ApiError
-                {
-                    Status = 403, Code = "forbidden", Message = "You do not have permission to perform this action.",
-                    TraceId = ctx.HttpContext.TraceIdentifier,
-                });
+                await ctx.Response.WriteApiErrorAsync(ApiError.Create(ctx.HttpContext, 403, "forbidden", "You do not have permission to perform this action."));
             },
         };
     });
@@ -90,6 +104,12 @@ builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationH
 builder.Services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode = 429;
+    o.OnRejected = async (ctx, _) =>
+    {
+        if (ctx.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retry))
+            ctx.HttpContext.Response.Headers.RetryAfter = ((int)Math.Ceiling(retry.TotalSeconds)).ToString();
+        await ctx.HttpContext.Response.WriteApiErrorAsync(ApiError.Create(ctx.HttpContext, 429, "rate_limited", "Too many requests. Try again later."));
+    };
     o.AddPolicy("login", ctx => RateLimitPartition.GetFixedWindowLimiter(
         ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions
@@ -117,14 +137,16 @@ builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
 builder.Services.AddControllers().ConfigureApiBehaviorOptions(o =>
 {
     // Binding/JSON errors use the same ApiError body as every other failure.
-    o.InvalidModelStateResponseFactory = ctx => new Microsoft.AspNetCore.Mvc.ObjectResult(new ApiError
+    o.InvalidModelStateResponseFactory = ctx =>
     {
-        Status = 400, Code = "validation_failed", Message = "The request is malformed or invalid.",
-        TraceId = ctx.HttpContext.TraceIdentifier,
-        Errors = ctx.ModelState.Where(e => e.Value?.Errors.Count > 0)
+        var errors = ctx.ModelState.Where(e => e.Value?.Errors.Count > 0)
             .ToDictionary(e => string.IsNullOrEmpty(e.Key) ? "body" : e.Key,
-                          e => e.Value!.Errors.Select(x => x.ErrorMessage.Length > 0 ? x.ErrorMessage : "Invalid value.").ToArray()),
-    }) { StatusCode = 400 };
+                          e => e.Value!.Errors.Select(x => x.ErrorMessage.Length > 0 ? x.ErrorMessage : "Invalid value.").ToArray());
+        var result = new Microsoft.AspNetCore.Mvc.ObjectResult(
+            ApiError.Create(ctx.HttpContext, 400, "validation_failed", "The request is malformed or invalid.", errors)) { StatusCode = 400 };
+        result.ContentTypes.Add(ApiErrorExtensions.ChooseContentType(ctx.HttpContext.Request));
+        return result;
+    };
 });
 
 // ---- Swagger ----
@@ -160,24 +182,25 @@ if (swaggerEnabled)
             Type = SecuritySchemeType.ApiKey, In = ParameterLocation.Header, Name = "X-Device-Key",
             Description = "ESP32 per-device API key (issued once by POST /devices or /devices/{id}/rotate-key). Used ONLY by POST /sensor-data; never a JWT.",
         });
+        // Stable, unique operationIds ("Controller_Action") so generated clients get predictable method names.
+        o.CustomOperationIds(api => api.ActionDescriptor is Microsoft.AspNetCore.Mvc.Controllers.ControllerActionDescriptor c ? $"{c.ControllerName}_{c.ActionName}" : null);
         o.OperationFilter<SwaggerSecurityFilter>();
     });
 }
 
 var app = builder.Build();
 
-app.UseMiddleware<PublicListenerGuard>();   // first: on the public port only POST /api/v1/sensor-data may pass
+app.UseMiddleware<RequestContextMiddleware>();   // outermost: request id, security headers and access log for every response
+app.UseMiddleware<PublicListenerGuard>();         // on the public port only POST /api/v1/sensor-data may pass
 app.UseMiddleware<ExceptionMiddleware>();
 app.UseStatusCodePages(async ctx =>
 {
     // Empty-bodied responses (404 unknown route, 405, 415...) get the standard error body too.
     var res = ctx.HttpContext.Response;
     if (res.ContentLength is null && res.ContentType is null)
-        await res.WriteAsJsonAsync(new ApiError
-        {
-            Status = res.StatusCode, Code = res.StatusCode switch { 404 => "not_found", 405 => "method_not_allowed", 415 => "unsupported_media_type", _ => "error" },
-            Message = Microsoft.AspNetCore.WebUtilities.ReasonPhrases.GetReasonPhrase(res.StatusCode), TraceId = ctx.HttpContext.TraceIdentifier,
-        });
+        await res.WriteApiErrorAsync(ApiError.Create(ctx.HttpContext, res.StatusCode,
+            res.StatusCode switch { 404 => "not_found", 405 => "method_not_allowed", 413 => "payload_too_large", 415 => "unsupported_media_type", _ => "error" },
+            Microsoft.AspNetCore.WebUtilities.ReasonPhrases.GetReasonPhrase(res.StatusCode)));
 });
 if (!app.Environment.IsDevelopment()) app.UseHsts();
 if (config.GetValue("Https:Redirect", false)) app.UseHttpsRedirection();
@@ -194,14 +217,17 @@ if (swaggerEnabled)
 
 app.MapControllers();
 
-// ---- Startup: optional migrate (dev/test) + SuperAdmin bootstrap ----
+// ---- Startup: SuperAdmin bootstrap. Schema migrations are NOT applied here (use `VayuVata --migrate`). ----
 using (var scope = app.Services.CreateScope())
 {
     var log = scope.ServiceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
     try
     {
         if (config.GetValue<bool>("Database:ApplyMigrationsOnStartup"))
-            await scope.ServiceProvider.GetRequiredService<VayuVataDbContext>().Database.MigrateAsync();
+            log.LogWarning("Database:ApplyMigrationsOnStartup is no longer supported and is ignored. Apply schema changes with `VayuVata --migrate`.");
+        var pending = (await scope.ServiceProvider.GetRequiredService<VayuVataDbContext>().Database.GetPendingMigrationsAsync()).ToList();
+        if (pending.Count > 0)
+            log.LogError("The database schema is behind this build ({Pending}). Run `VayuVata --migrate` with the migration login; the API will fail until then.", string.Join(", ", pending));
         await DbInitializer.BootstrapSuperAdminAsync(scope.ServiceProvider, log);
     }
     catch (Exception ex) when (ex is Microsoft.Data.SqlClient.SqlException or InvalidOperationException { InnerException: Microsoft.Data.SqlClient.SqlException })
@@ -212,5 +238,6 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.Run();
+return 0;
 
 public partial class Program;

@@ -13,6 +13,12 @@ public class CreateSensorDataRequest
     /// <summary>UTC time of measurement (ISO-8601). Defaults to server time if omitted. (DeviceId, RecordedAt) uniquely identifies a reading; resubmitting it returns 409.</summary>
     /// <example>2026-10-11T08:30:00Z</example>
     public DateTime? RecordedAt { get; set; }
+    /// <summary>Optional device-reported date of the reading (yyyy-MM-dd). When omitted it is derived from recordedAt.</summary>
+    /// <example>2026-10-11</example>
+    public DateOnly? DataDate { get; set; }
+    /// <summary>Optional device-reported time of the reading (HH:mm:ss). When omitted it is derived from recordedAt.</summary>
+    /// <example>14:00:00</example>
+    public TimeOnly? DataTime { get; set; }
     /// <example>87</example>
     public int? Aqi { get; set; }
     /// <example>Moderate</example>

@@ -64,9 +64,6 @@ namespace VayuVata.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("DeviceId")
-                        .IsUnique();
-
                     b.ToTable("Devices", (string)null);
                 });
 
@@ -130,6 +127,14 @@ namespace VayuVata.Migrations
                     b.Property<DateTime>("ExpiresAt")
                         .HasColumnType("datetime2(3)");
 
+                    b.Property<Guid>("FamilyId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier")
+                        .HasDefaultValueSql("NEWID()");
+
+                    b.Property<int?>("ReplacedByTokenId")
+                        .HasColumnType("int");
+
                     b.Property<DateTime?>("RevokedAt")
                         .HasColumnType("datetime2(3)");
 
@@ -143,6 +148,10 @@ namespace VayuVata.Migrations
                         .HasColumnType("int");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("FamilyId");
 
                     b.HasIndex("TokenHash")
                         .IsUnique();
@@ -277,12 +286,23 @@ namespace VayuVata.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
 
+                    b.Property<int>("FailedLoginCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(0);
+
                     b.Property<bool>("IsActive")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bit")
                         .HasDefaultValue(true);
 
+                    b.Property<DateTime?>("LastFailedLoginAt")
+                        .HasColumnType("datetime2(3)");
+
                     b.Property<DateTime?>("LastLoginAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<DateTime?>("LockoutUntil")
                         .HasColumnType("datetime2(3)");
 
                     b.Property<int?>("ManagerId")

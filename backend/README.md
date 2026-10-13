@@ -22,10 +22,12 @@ cd VayuVata/backend
 dotnet user-secrets set "Jwt:Key" "<random string, >= 32 chars>"
 dotnet user-secrets set "Bootstrap:SuperAdminEmail" "you@example.com"
 dotnet user-secrets set "Bootstrap:SuperAdminPassword" "<strong password, >= 10 chars>"
+dotnet run -- --migration-status          # lists applied / pending migrations (needs ConnectionStrings:Migration, see below)
+dotnet run -- --migrate                   # applies pending migrations (explicit step; start-up never migrates)
 dotnet run --launch-profile http          # http://localhost:5080/swagger
 ```
 
-In `Development` the app applies EF migrations on startup (`Database:ApplyMigrationsOnStartup`) and creates the bootstrap SuperAdmin if no SuperAdmin exists. Then log in via `POST /api/v1/auth/login`.
+Schema changes are an explicit step (`--migrate`), never part of API start-up; the app only creates the bootstrap SuperAdmin if none exists. For local development with Windows auth the migration connection string can simply equal the default one: `ConnectionStrings__Migration` is read **only** by `--migrate` / `--migration-status`. Then log in via `POST /api/v1/auth/login`.
 
 ## Manager hierarchy (`Users.ManagerId`)
 
@@ -60,7 +62,13 @@ Keys are in `appsettings.json`; override with environment variables (`__` = `:`)
 | `Jwt:Issuer/Audience/AccessTokenMinutes/RefreshTokenDays` | Token settings (15 min / 7 days) |
 | `Bootstrap:SuperAdminEmail/Password/Name` | First SuperAdmin (only used while no SuperAdmin exists) |
 | `Swagger:Enabled` | Swagger UI at `/swagger` (on in Development, **off** by default) |
-| `Database:ApplyMigrationsOnStartup` | Auto-migrate (on in Development; off elsewhere) |
+| `ConnectionStrings:Migration` | Used **only** by `VayuVata --migrate` / `--migration-status` (login with DDL rights). Never given to the running API |
+| `Database:ApplyMigrationsOnStartup` | **Removed.** Still readable but ignored (a warning is logged); start-up never changes the schema |
+| `Database:AllowProductionMigration` | Must be `true` before `--migrate` will run with `ASPNETCORE_ENVIRONMENT=Production` (default false) |
+| `Auth:MaxFailedAttempts` / `Auth:LockoutMinutes` | Per-account lockout: 5 wrong passwords inside 15 minutes lock login for 15 minutes (defaults) |
+| `RefreshTokens:Cleanup:*` | `Enabled` (true), `RetentionDays` (30), `BatchSize` (500), `MaxBatchesPerRun` (20), `IntervalMinutes` (360) |
+| `Ingest:FutureToleranceMinutes` / `Ingest:MissingRecordedAtOffsetMinutes` | Device-clock semantics of ingest: 360 / 330 (the ESP32 reports IST wall-clock time) |
+| `DeviceAuth:AcceptStoredHashAsKey` | **Security-sensitive, default false.** Lets a device present the stored key hash instead of its key (see "Stage B" below) |
 | `Cors:AllowedOrigins` | Allowed browser origins (empty = no CORS) |
 | `RateLimiting:LoginPermitLimit` | Login/refresh attempts per IP per minute (default 10) |
 | `Https:Redirect` | Enable HTTPS redirection |
@@ -204,3 +212,47 @@ Used for `72.61.170.214` (production keeps running there, untouched). Self-conta
 
 ### UAT: public Swagger / full API on port 5081 (added on request)
 HTTPS `0.0.0.0:5081` (same pinned self-signed certificate) serves the **full API and Swagger** to anyone on the internet (no `PublicListenerGuard` on this port; only port 5443 is restricted to sensor ingestion). Open `https://72.61.170.214:5081/swagger`, accept the self-signed certificate warning, then Authorize with a JWT from `POST /api/v1/auth/login`. Login is rate limited (10/min per IP). To close it again: `ufw delete allow 5081/tcp`, remove the three `Kestrel__Endpoints__Admin__*` lines from `/opt/vayuvata-uat/secrets/uat.env` (a backup of the previous file is `uat.env.bak-before-5081`), and `systemctl restart vayuvata-uat`.
+
+## Stage B: API quality, authentication, database access (UAT)
+
+**Errors.** Every error body is an RFC 7807 problem document (`type`, `title`, `status`, `detail`, `instance`) that also keeps the original
+fields (`code`, `message`, `errors`, `traceId`). It is labelled `application/json` (what existing clients and the ESP32 already receive) and
+`application/problem+json` when the caller sends `Accept: application/problem+json`. `traceId` always equals the `X-Request-Id` response header,
+which is also in the server log line for that request. Oversized bodies (> 16 KB) return **413** `payload_too_large`. 500 responses carry only the id.
+
+**Headers.** Every response (including 401/404/429/5xx and the public listener's empty 404) has `X-Request-Id`, `X-Content-Type-Options: nosniff`,
+`X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Permissions-Policy`, and (non-Swagger) `Cache-Control: no-store` + a restrictive CSP.
+The `Server` header is removed. A caller-supplied `X-Request-Id` is echoed only if it is <= 64 safe characters.
+
+**Logging.** One access-log line per request (`HTTP {method} {path} -> {status} in {ms} ms (ip, port, user id, request id)`). Headers, bodies and query
+strings are never logged; paths pass through `LogRedactor` (JWT / device-key look-alikes masked); failed-login lines mask the e-mail
+(`u***@host`) and state the reason (`unknown_account`, `wrong_password`, `locked`, `disabled`) **in the log only**. The framework's own request
+lines (which contain the query string) are kept at Warning.
+
+**Authentication.**
+- *Lockout:* `Auth:MaxFailedAttempts` wrong passwords within `Auth:LockoutMinutes` lock that account for the same period. Unknown, wrong-password, locked and
+  disabled accounts all get the same `401 Invalid email or password.` The counter resets on a successful login, on an Admin/SuperAdmin password reset
+  and on re-activation; failures while locked are not counted (the lock cannot be extended by an attacker); it expires on its own. IP rate limiting is unchanged.
+- *Refresh tokens:* single-use rotation with a **family** per login. Presenting an already-rotated token revokes the whole family (logged as a SECURITY
+  warning); concurrent use of one token yields exactly one success (atomic `UPDATE ... WHERE RevokedAt IS NULL`). Other logins of the same user are unaffected.
+  Tokens rotated before this release have no replacement link, so reusing *those* is a plain 401.
+- *`POST /api/v1/auth/change-password`* (any role, JWT): `{currentPassword, newPassword}`. Always the caller's own account. Policy: 10-100 chars, upper + lower + digit,
+  different from the current one. Revokes all of the user's refresh tokens and returns a fresh session. Wrong current password -> 400 `current_password_incorrect`
+  and counts towards the lockout (6th try -> 429 `account_locked`).
+
+**Database access.** Two SQL logins: the *runtime* login (`vayuvata_uat`) has `SELECT/INSERT/UPDATE` on schema `dbo` and `DELETE` on `RefreshTokens` only (no `db_owner`,
+no DDL, cannot delete users/devices/assignments/readings); the *migration* login (`vayuvata_migrator`, `db_owner` of `VayuVata` only) is used by `--migrate`,
+installed on the server as `/opt/vayuvata-uat/bin/migrate.sh [status|apply]` (`Database/migrate-uat.sh`). `--migrate` is repeatable (EF history), refuses any database
+not named `VayuVata`, refuses `Production` unless `Database:AllowProductionMigration=true`, and never drops anything. Migration `AuthHardening` adds
+`Users.FailedLoginCount/LastFailedLoginAt/LockoutUntil`, `RefreshTokens.FamilyId/ReplacedByTokenId` (+ indexes) and drops the redundant unique index
+`IX_Devices_DeviceId` (uniqueness and the `SensorData` foreign key are enforced by `AK_Devices_DeviceId`; the migration refuses to drop it unless that constraint exists).
+
+**Lists.** `includeTotal=false` on every paged list skips `COUNT(*)`: `totalCount`/`totalPages` become `null` and `hasNextPage` says whether another page exists.
+Default behaviour is unchanged (`totalCount` present; `hasNextPage` is new and additive). Expired refresh tokens (expired more than 30 days ago) are deleted in bounded
+batches by a background service; active, revoked-but-unexpired and recently expired tokens are never touched.
+
+**ESP32 ingestion compatibility.** `POST /api/v1/sensor-data` keeps the contract the live device uses: optional `dataDate`/`dataTime` are accepted and stored as sent; an omitted
+`recordedAt` is stamped UTC+330 min (IST wall-clock, `Ingest:MissingRecordedAtOffsetMinutes`); a supplied `recordedAt` is stored exactly as sent and may be up to 6 h ahead of UTC
+(`Ingest:FutureToleranceMinutes`) because the device clock is IST. `DeviceAuth:AcceptStoredHashAsKey` (default **false**) additionally accepts the stored key hash as the key -
+this is what the live firmware currently sends; it weakens device authentication (anyone who can read the `Devices` table can post as that device) and should be turned off
+after the device is reflashed with its real `vv_` key.

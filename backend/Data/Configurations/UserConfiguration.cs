@@ -27,6 +27,9 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
         b.Property(u => u.CreatedAt).HasColumnType("datetime2(3)").HasDefaultValueSql("SYSUTCDATETIME()");
         b.Property(u => u.UpdatedAt).HasColumnType("datetime2(3)");
         b.Property(u => u.LastLoginAt).HasColumnType("datetime2(3)");
+        b.Property(u => u.FailedLoginCount).HasDefaultValue(0);
+        b.Property(u => u.LastFailedLoginAt).HasColumnType("datetime2(3)");
+        b.Property(u => u.LockoutUntil).HasColumnType("datetime2(3)");
 
         b.HasIndex(u => u.Email).IsUnique();
         b.HasIndex(u => u.ManagerId);

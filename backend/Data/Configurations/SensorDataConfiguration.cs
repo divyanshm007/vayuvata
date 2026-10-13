@@ -51,7 +51,10 @@ public class RefreshTokenConfiguration : IEntityTypeConfiguration<RefreshToken>
         b.Property(r => r.CreatedAt).HasColumnType("datetime2(3)");
         b.Property(r => r.ExpiresAt).HasColumnType("datetime2(3)");
         b.Property(r => r.RevokedAt).HasColumnType("datetime2(3)");
+        b.Property(r => r.FamilyId).HasDefaultValueSql("NEWID()");
         b.HasIndex(r => r.TokenHash).IsUnique();
+        b.HasIndex(r => r.FamilyId);
+        b.HasIndex(r => r.ExpiresAt);   // retention cleanup scans by expiry
         b.HasOne(r => r.User).WithMany().HasForeignKey(r => r.UserId).OnDelete(DeleteBehavior.Restrict);
     }
 }

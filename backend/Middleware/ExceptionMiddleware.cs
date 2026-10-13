@@ -13,32 +13,31 @@ public class ExceptionMiddleware(RequestDelegate next, ILogger<ExceptionMiddlewa
         {
             var error = Map(ex, ctx);
             ctx.Response.Clear();
-            ctx.Response.StatusCode = error.Status;
-            await ctx.Response.WriteAsJsonAsync(error);
+            await ctx.Response.WriteApiErrorAsync(error);
         }
     }
 
     private ApiError Map(Exception ex, HttpContext ctx)
     {
-        var trace = ctx.TraceIdentifier;
         switch (ex)
         {
             case ApiException api:
-                return new ApiError { Status = api.Status, Code = api.Code, Message = api.Message, TraceId = trace };
+                return ApiError.Create(ctx, api.Status, api.Code, api.Message);
             case ValidationException v:
-                return new ApiError
-                {
-                    Status = 400, Code = "validation_failed", Message = "One or more validation errors occurred.", TraceId = trace,
-                    Errors = v.Errors.GroupBy(e => e.PropertyName)
-                        .ToDictionary(g => g.Key, g => g.Select(e => e.ErrorMessage).ToArray()),
-                };
+                return ApiError.Create(ctx, 400, "validation_failed", "One or more validation errors occurred.",
+                    v.Errors.GroupBy(e => e.PropertyName).ToDictionary(g => g.Key, g => g.Select(e => e.ErrorMessage).Distinct().ToArray()));
+            case BadHttpRequestException { StatusCode: 413 }:
+                return ApiError.Create(ctx, 413, "payload_too_large", "The request body exceeds the maximum allowed size.");
+            case BadHttpRequestException { StatusCode: 408 }:
+                return ApiError.Create(ctx, 408, "request_timeout", "The request was not received in time.");
             case BadHttpRequestException or System.Text.Json.JsonException:
-                return new ApiError { Status = 400, Code = "bad_request", Message = "Malformed request.", TraceId = trace };
+                return ApiError.Create(ctx, 400, "bad_request", "Malformed request.");
             case OperationCanceledException:
-                return new ApiError { Status = 499, Code = "cancelled", Message = "Request cancelled.", TraceId = trace };
+                return ApiError.Create(ctx, 499, "cancelled", "Request cancelled.");
             default:
-                log.LogError(ex, "Unhandled exception on {Method} {Path}", ctx.Request.Method, ctx.Request.Path);
-                return new ApiError { Status = 500, Code = "server_error", Message = "An unexpected error occurred.", TraceId = trace };
+                // The exception (with stack trace) goes to the server log only, correlated by request id; never to the client.
+                log.LogError(ex, "Unhandled exception on {Method} {Path} (request {RequestId})", ctx.Request.Method, LogRedactor.Clean(ctx.Request.Path.Value), ctx.TraceIdentifier);
+                return ApiError.Create(ctx, 500, "server_error", "An unexpected error occurred.");
         }
     }
 }
