@@ -11,7 +11,7 @@ public class CreateGpsLocationRequest
     /// <summary>Registered device identifier (must match the owner of the X-Device-Key), at most 50 characters.</summary>
     /// <example>vayuvata-pi-01</example>
     public string DeviceId { get; set; } = "";
-    /// <summary>UTC time of the fix (ISO-8601, from GPS time). Required; cannot be in the future. (deviceId, recordedAt) is unique: a repeat returns 200 with the stored report.</summary>
+    /// <summary>Time of the fix, ISO-8601 UTC (GPS time, e.g. ...Z); an explicit offset is also accepted. Required; cannot be in the future. It is converted to and STORED AS IST (UTC+5:30). (deviceId, recordedAt) is unique: a repeat returns 200 with the stored report.</summary>
     /// <example>2026-10-14T01:30:00Z</example>
     public DateTime? RecordedAt { get; set; }
     /// <summary>true when a position is included; false for a no-fix report (then lat/lon/altM/speedKmh must be null). Required.</summary>
@@ -41,8 +41,10 @@ public class GpsLocationDto
 {
     public long Id { get; set; }
     public string DeviceId { get; set; } = "";
-    public DateTime RecordedAt { get; set; }
-    public DateTime ReceivedAt { get; set; }
+    /// <summary>Time of the fix in IST, with the +05:30 offset (e.g. 2026-10-14T07:00:00+05:30).</summary>
+    public DateTimeOffset RecordedAt { get; set; }
+    /// <summary>Time the server stored the report, in IST with the +05:30 offset.</summary>
+    public DateTimeOffset ReceivedAt { get; set; }
     public bool Fix { get; set; }
     public string Source { get; set; } = "";
     public decimal? Lat { get; set; }
@@ -56,7 +58,9 @@ public class GpsLocationQuery : PageQuery
 {
     /// <summary>Physical device identifier filter.</summary>
     public string? DeviceId { get; set; }
+    /// <summary>Window start (ISO-8601 with Z/offset; a value without zone is read as IST).</summary>
     public DateTime? From { get; set; }
+    /// <summary>Window end (same rules as from).</summary>
     public DateTime? To { get; set; }
     /// <summary>true = only reports with a position, false = only no-fix reports.</summary>
     public bool? Fix { get; set; }

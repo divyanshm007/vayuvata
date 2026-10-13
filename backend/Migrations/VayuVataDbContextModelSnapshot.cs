@@ -151,7 +151,7 @@ namespace VayuVata.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2(3)")
                         .HasColumnName("received_at")
-                        .HasDefaultValueSql("SYSUTCDATETIME()");
+                        .HasDefaultValueSql("DATEADD(MINUTE, 330, SYSUTCDATETIME())");
 
                     b.Property<DateTime>("RecordedAt")
                         .HasColumnType("datetime2(3)")

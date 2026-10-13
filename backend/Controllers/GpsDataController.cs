@@ -16,7 +16,7 @@ public class GpsDataController(GpsLocationService gps) : ControllerBase
     private CurrentUser Me => CurrentUser.From(User);
 
     /// <summary>
-    /// Position upload (Raspberry Pi, once a minute). Authenticate with the per-device key in the <c>X-Device-Key</c> header (NOT a JWT).
+    /// Position upload (Raspberry Pi, once a minute). Authenticate with the per-device key in the <c>X-Device-Key</c> header (NOT a JWT). Same key rule as sensor data (the issued key, or the stored key hash when the server's compatibility switch is on).
     /// </summary>
     /// <remarks>
     /// Idempotent: re-sending the same (deviceId, recordedAt) returns 200 with the stored report instead of an error, so a retry is safe.

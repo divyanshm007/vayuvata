@@ -117,7 +117,7 @@ function ApiAt([string]$root, [string]$method, [string]$path, $body = $null, [st
 }
 function Login([string]$email, [string]$pw) { Api POST /api/v1/auth/login @{ email = $email; password = $pw } }
 function Token([string]$email, [string]$pw = $Pw) { (Login $email $pw).Json.accessToken }
-function Ts([int]$minutesAgo) { (Get-Date).ToUniversalTime().AddMinutes(-$minutesAgo).ToString("yyyy-MM-ddTHH:mm:ss.fffZ") }
+function Ts([double]$minutesAgo) { (Get-Date).ToUniversalTime().AddMinutes(-$minutesAgo).ToString("yyyy-MM-ddTHH:mm:ss.fffZ") }
 function B64Url([byte[]]$b) { [Convert]::ToBase64String($b).TrimEnd('=').Replace('+', '-').Replace('/', '_') }
 function Make-Jwt([string]$key, [int]$sub, [string]$role, [int]$expOffsetSeconds) {
     $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
@@ -1240,9 +1240,9 @@ ROLLBACK;
     $g1 = Send-Gps 'VVTEST-GPS-1' $GK1 @{ recordedAt = $t1 }
     $g1row = Sql $Db "SELECT CONCAT(device_id,'|',has_fix,'|',source,'|',latitude,'|',longitude,'|',altitude_m,'|',speed_kmh,'|',signal_pct) FROM dbo.GpsLocationData WHERE ID=$($g1.Json.id)"
     Check 'GP01' 'Valid fix from the Pi payload: 201, report returned and stored with exact precision (6 / 6 / 1 / 1 decimals, tinyint signal)' ($g1.Status -eq 201 -and $g1.Json.fix -eq $true -and $g1.Json.lat -eq 28.580707 -and $g1.Json.lon -eq 77.398512 -and $g1.Json.altM -eq 239.9 -and $g1.Json.signalPct -eq 83 -and $g1.Json.deviceId -eq 'VVTEST-GPS-1' -and $g1row -eq 'VVTEST-GPS-1|1|gps|28.580707|77.398512|239.9|0.0|83') "$($g1.Status) $g1row"
-    Check 'GP01b' 'Timestamps are explicit UTC (end with Z); receivedAt is set by SQL Server' ($g1.Raw -match '"recordedAt":"[^"]+Z"' -and $g1.Raw -match '"receivedAt":"[^"]+Z"')
+    Check 'GP01b' 'Timestamps are IST: returned with the +05:30 offset; receivedAt is set by SQL Server' ($g1.Raw -match '"recordedAt":"[^"]+\+05:30"' -and $g1.Raw -match '"receivedAt":"[^"]+\+05:30"') $g1.Raw
     $g1dup = Send-Gps 'VVTEST-GPS-1' $GK1 @{ recordedAt = $t1; lat = 10.0; lon = 20.0 }
-    Check 'GP02' 'Re-sending the same (deviceId, recordedAt) is idempotent: 200 with the ORIGINAL stored report (id and position unchanged), still one row' ($g1dup.Status -eq 200 -and $g1dup.Json.id -eq $g1.Json.id -and $g1dup.Json.lat -eq 28.580707 -and (Sql $Db "SELECT COUNT(*) FROM dbo.GpsLocationData WHERE device_id='VVTEST-GPS-1' AND recorded_at='$($t1.TrimEnd('Z'))'") -eq '1') "$($g1dup.Status)"
+    Check 'GP02' 'Re-sending the same (deviceId, recordedAt) is idempotent: 200 with the ORIGINAL stored report (id and position unchanged), still one row' ($g1dup.Status -eq 200 -and $g1dup.Json.id -eq $g1.Json.id -and $g1dup.Json.lat -eq 28.580707 -and (Sql $Db "SELECT COUNT(*) FROM dbo.GpsLocationData WHERE device_id='VVTEST-GPS-1' AND recorded_at=DATEADD(MINUTE,330,CAST('$($t1.TrimEnd('Z'))' AS datetime2(3)))") -eq '1') "$($g1dup.Status)"
     $t2 = Ts 12
     $par = 1..6 | ForEach-Object -ThrottleLimit 6 -Parallel {
         $r = Invoke-WebRequest -Uri "$($using:base)/api/v1/gps-data" -Method POST -Headers @{ 'X-Device-Key' = $using:GK1 } -ContentType 'application/json' -SkipHttpErrorCheck `
@@ -1273,8 +1273,8 @@ ROLLBACK;
     Check 'GP05' "Validation: $($bad.Count) invalid payloads (coordinates out of range, missing fields, bad source/signal/speed/altitude, future or ancient time, long deviceId) are all 400 validation_failed" ($badOk.Count -eq 0) ($badOk -join '; ')
     Check 'GP05b' 'None of the rejected payloads stored anything' ((Sql $Db "SELECT COUNT(*) FROM dbo.GpsLocationData") -eq $before)
     $off = Send-Gps 'VVTEST-GPS-1' $GK1 @{ recordedAt = ((Get-Date).ToUniversalTime().AddMinutes(-6).ToString("yyyy-MM-ddTHH:mm:ss.fff") + '+05:30') }
-    $offRow = Sql $Db "SELECT DATEDIFF(MINUTE, recorded_at, DATEADD(MINUTE, -(330 + 6), SYSUTCDATETIME())) FROM dbo.GpsLocationData WHERE ID=$($off.Json.id)"
-    Check 'GP06' 'A timestamp with an explicit offset (+05:30) is converted to UTC before storing' ($off.Status -eq 201 -and [Math]::Abs([int]$offRow) -le 3) "diff=$offRow"
+    $offRow = Sql $Db "SELECT DATEDIFF(MINUTE, recorded_at, DATEADD(MINUTE, -6, SYSUTCDATETIME())) FROM dbo.GpsLocationData WHERE ID=$($off.Json.id)"
+    Check 'GP06' 'A timestamp with an explicit offset (+05:30) is the same instant: stored as IST wall-clock (UTC + 5:30)' ($off.Status -eq 201 -and [Math]::Abs([int]$offRow) -le 3) "diff=$offRow"
     $au1 = Send-Gps 'VVTEST-GPS-1' $null @{ recordedAt = (Ts 6) }
     $au2 = Send-Gps 'VVTEST-GPS-1' 'vv_wrongkey' @{ recordedAt = (Ts 6) }
     $au3 = Send-Gps 'VVTEST-GPS-1' $GK2 @{ recordedAt = (Ts 6) }
@@ -1282,11 +1282,24 @@ ROLLBACK;
     $au5 = Send-Gps 'VVTEST-GPS-OFF' $GK4 @{ recordedAt = (Ts 6) }
     $au6 = ApiAt $base POST /api/v1/gps-data @{ deviceId = 'VVTEST-GPS-1'; recordedAt = (Ts 6); fix = $true; source = 'gps'; lat = 1; lon = 1 } $SA
     $hashAsKey = Send-Gps 'VVTEST-GPS-1' (Sql $Db "SELECT ApiKeyHash FROM Devices WHERE DeviceId='VVTEST-GPS-1'") @{ recordedAt = (Ts 6) }
-    Check 'GP07' 'Auth: missing key, wrong key, another device''s key, unknown device, a user JWT and the stored key hash are all 401 (same answer); an inactive device is 403' ($au1.Status -eq 401 -and $au2.Status -eq 401 -and $au3.Status -eq 401 -and $au4.Status -eq 401 -and $au6.Status -eq 401 -and $hashAsKey.Status -eq 401 -and $au5.Status -eq 403) "$($au1.Status)/$($au2.Status)/$($au3.Status)/$($au4.Status)/$($au6.Status)/$($hashAsKey.Status)/$($au5.Status)"
+    Check 'GP07' 'Auth: missing key, wrong key, another device''s key, unknown device, a user JWT and (secure default) the stored key hash are all 401 (same answer); an inactive device is 403' ($au1.Status -eq 401 -and $au2.Status -eq 401 -and $au3.Status -eq 401 -and $au4.Status -eq 401 -and $au6.Status -eq 401 -and $hashAsKey.Status -eq 401 -and $au5.Status -eq 403) "$($au1.Status)/$($au2.Status)/$($au3.Status)/$($au4.Status)/$($au6.Status)/$($hashAsKey.Status)/$($au5.Status)"
     $rotK = Api POST "/api/v1/devices/$GD3/rotate-key" $null $SA
     $rk = [string]$rotK.Json.apiKey
     $okNew = Send-Gps -dev 'VVTEST-GPS-3' -key $rk -b @{ recordedAt = (Ts 5) }; $oldK = Send-Gps -dev 'VVTEST-GPS-3' -key $GK3 -b @{ recordedAt = (Ts 4) }
     Check 'GP07b' 'Device-key lifecycle is shared with sensor data: after rotate-key the new key works for GPS and the old one stops' ($okNew.Status -eq 201 -and $oldK.Status -eq 401)
+    # compatibility switch ON (as on the live UAT): the Pi / device that holds the stored key hash can push GPS too (throwaway instance)
+    $rkPort = $Port + 5
+    $env:DeviceAuth__AcceptStoredHashAsKey = 'true'
+    $rkApp = Start-Process dotnet -ArgumentList @((Join-Path $bin 'VayuVata.dll'), '--urls', "http://localhost:$rkPort") -WorkingDirectory $project -PassThru -RedirectStandardOutput (Join-Path $runDir 'gpskey.log') -RedirectStandardError (Join-Path $runDir 'gpskey.err.log') -WindowStyle Hidden
+    $env:DeviceAuth__AcceptStoredHashAsKey = $null
+    $rkUp = $false; 1..40 | ForEach-Object { if (-not $rkUp) { try { $rkUp = ((Invoke-WebRequest "http://localhost:$rkPort/api/v1/health" -SkipHttpErrorCheck).StatusCode -eq 200) } catch { Start-Sleep 1 } } }
+    $hk = Sql $Db "SELECT ApiKeyHash FROM Devices WHERE DeviceId='VVTEST-GPS-1'"; $hk2 = Sql $Db "SELECT ApiKeyHash FROM Devices WHERE DeviceId='VVTEST-GPS-2'"
+    $rk1 = Send-Gps -dev 'VVTEST-GPS-1' -key $hk -b @{ recordedAt = (Ts 3.5) } -root "http://localhost:$rkPort"
+    $rk2 = Send-Gps -dev 'VVTEST-GPS-1' -key $hk2 -b @{ recordedAt = (Ts 3.6) } -root "http://localhost:$rkPort"
+    $rk3 = Send-Gps -dev 'VVTEST-GPS-1' -key $null -b @{ recordedAt = (Ts 3.7) } -root "http://localhost:$rkPort"
+    Check 'GP07c' 'With DeviceAuth:AcceptStoredHashAsKey=on (as on UAT) the stored key hash authenticates ITS device for GPS (201); another device''s hash 401; no key 401' ($rkUp -and $rk1.Status -eq 201 -and $rk2.Status -eq 401 -and $rk3.Status -eq 401) "$($rk1.Status)/$($rk2.Status)/$($rk3.Status)"
+    Get-NetTCPConnection -LocalPort $rkPort -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+    if ($rkApp -and -not $rkApp.HasExited) { Stop-Process -Id $rkApp.Id -Force -ErrorAction SilentlyContinue }
     $bigR = Req POST /api/v1/gps-data -headers @{ 'X-Device-Key' = $GK1 } -rawBody ('{"deviceId":"VVTEST-GPS-1","fix":false,"source":"gps"}' + (' ' * 20000))
     Check 'GP08' 'Oversized body -> 413' ($bigR.StatusCode -eq 413)
 
@@ -1315,6 +1328,11 @@ ROLLBACK;
     Check 'GP12' 'Latest position = GET with pageSize=1 (newest first): fix=true returns the newest real fix, without the filter the newest report (the no-fix one); another Admin''s User gets nothing; anonymous 401' ($lat1.Status -eq 200 -and $lat1.Json.items.Count -eq 1 -and $lat1.Json.items[0].fix -eq $true -and $lat2.Json.items[0].fix -eq $false -and $lat2.Json.items[0].recordedAt -gt $lat1.Json.items[0].recordedAt -and (Api GET '/api/v1/gps-data?deviceId=VVTEST-GPS-1&pageSize=1' $null $U3).Json.items.Count -eq 0 -and (Api GET '/api/v1/gps-data?pageSize=1').Status -eq 401) "$($lat1.Status)"
     Check 'GP13' 'Every report carries its deviceId (response and table) and the response has no internal fields beyond the payload + id/receivedAt' ((@($lat1.Json.items[0].PSObject.Properties.Name | Sort-Object) -join ',') -eq 'altM,deviceId,fix,id,lat,lon,receivedAt,recordedAt,signalPct,source,speedKmh' -and $lat1.Json.items[0].deviceId -eq 'VVTEST-GPS-1')
 
+    $ist = Send-Gps -dev 'VVTEST-GPS-3' -key $rk -b @{ recordedAt = '2026-10-13T01:30:00Z' }
+    $istRow = Sql $Db "SELECT CONCAT(CONVERT(varchar(23), recorded_at, 121), '|', CASE WHEN received_at BETWEEN DATEADD(MINUTE, 325, SYSUTCDATETIME()) AND DATEADD(MINUTE, 336, SYSUTCDATETIME()) THEN 'received-ist' ELSE 'received-OFF' END) FROM dbo.GpsLocationData WHERE ID=$($ist.Json.id)"
+    Check 'GP18' 'IST storage: the Pi sends UTC 2026-10-13T01:30:00Z; the database holds 2026-10-13 07:00:00.000 (IST wall-clock), received_at is IST too, and the API returns 2026-10-13T07:00:00+05:30' ($ist.Status -eq 201 -and $istRow -eq '2026-10-13 07:00:00.000|received-ist' -and $ist.Raw -match '"recordedAt":"2026-10-13T07:00:00\+05:30"') "$($ist.Status) $istRow $($ist.Raw)"
+    $istFilter = Api GET '/api/v1/gps-data?deviceId=VVTEST-GPS-3&from=2026-10-13T07:00:00%2B05:30&to=2026-10-13T01:30:00Z&pageSize=5' $null $SA
+    Check 'GP18b' 'from/to windows are applied in IST: 07:00+05:30 and 01:30Z (the same instant) find the report' ($istFilter.Status -eq 200 -and $istFilter.Json.totalCount -eq 1) $istFilter.Raw
     # database level
     $gcols = Sql $Db "SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY column_id) FROM sys.columns WHERE object_id=OBJECT_ID('dbo.GpsLocationData')"
     Check 'GP14' 'Table dbo.GpsLocationData has the designed columns' ($gcols -eq 'ID,device_id,recorded_at,received_at,has_fix,source,latitude,longitude,altitude_m,speed_kmh,signal_pct') $gcols

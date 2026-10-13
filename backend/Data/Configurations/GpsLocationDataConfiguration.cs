@@ -22,7 +22,7 @@ public class GpsLocationDataConfiguration : IEntityTypeConfiguration<GpsLocation
         b.Property(g => g.DeviceCode).HasColumnName("device_id").IsRequired().HasMaxLength(64);
         b.Property(g => g.RecordedAt).HasColumnName("recorded_at").HasColumnType("datetime2(3)");
         b.Property(g => g.ReceivedAt).HasColumnName("received_at").HasColumnType("datetime2(3)")
-            .HasDefaultValueSql("SYSUTCDATETIME()").ValueGeneratedOnAdd();
+            .HasDefaultValueSql("DATEADD(MINUTE, 330, SYSUTCDATETIME())").ValueGeneratedOnAdd();   // IST wall-clock
         b.Property(g => g.HasFix).HasColumnName("has_fix");
         b.Property(g => g.Source).HasColumnName("source").IsRequired().HasMaxLength(8);
         b.Property(g => g.Latitude).HasColumnName("latitude").HasPrecision(9, 6);

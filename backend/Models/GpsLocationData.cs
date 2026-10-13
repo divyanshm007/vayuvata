@@ -10,9 +10,9 @@ public class GpsLocationData
     public long Id { get; set; }
     public string DeviceCode { get; set; } = "";       // column device_id -> Devices.DeviceId
     public Device Device { get; set; } = null!;
-    /// <summary>UTC time of the fix (GPS time, not the device clock).</summary>
+    /// <summary>Time of the fix as IST (UTC+5:30) wall-clock. The device sends UTC (GPS time); the server converts before storing.</summary>
     public DateTime RecordedAt { get; set; }
-    /// <summary>UTC time the server stored the row.</summary>
+    /// <summary>Time SQL Server stored the row, as IST wall-clock (UTC+5:30).</summary>
     public DateTime ReceivedAt { get; set; }
     public bool HasFix { get; set; }
     /// <summary>"gps" (satellite fix) or "cell" (approximate tower position).</summary>

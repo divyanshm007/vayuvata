@@ -125,8 +125,8 @@ CREATE TABLE dbo.ManipulatedSensorData (
 CREATE TABLE dbo.GpsLocationData (
     ID           bigint IDENTITY(1,1) NOT NULL,
     device_id    nvarchar(64)  NOT NULL,
-    recorded_at  datetime2(3)  NOT NULL,                -- UTC time of the fix
-    received_at  datetime2(3)  NOT NULL CONSTRAINT DF_GpsLocationData_received_at DEFAULT SYSUTCDATETIME(),
+    recorded_at  datetime2(3)  NOT NULL,                -- time of the fix as IST wall-clock (device sends UTC, the API converts)
+    received_at  datetime2(3)  NOT NULL CONSTRAINT DF_GpsLocationData_received_at DEFAULT DATEADD(MINUTE, 330, SYSUTCDATETIME()),   -- IST
     has_fix      bit           NOT NULL,
     source       nvarchar(8)   NOT NULL,                -- 'gps' | 'cell'
     latitude     decimal(9,6)  NULL,
