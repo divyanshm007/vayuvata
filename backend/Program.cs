@@ -58,6 +58,7 @@ builder.Services.AddScoped<UserService>();
 builder.Services.AddScoped<DeviceService>();
 builder.Services.AddScoped<DeviceAssignmentService>();
 builder.Services.AddScoped<SensorDataService>();
+builder.Services.AddScoped<GpsLocationService>();
 builder.Services.AddValidatorsFromAssemblyContaining<Program>();
 
 // ---- Authentication / authorization ----

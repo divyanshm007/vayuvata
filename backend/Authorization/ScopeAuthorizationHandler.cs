@@ -50,6 +50,11 @@ public static class ScopeFilters
         : c.IsAdmin ? db.Devices.Where(d => d.Assignments.Any(a => a.IsActive && a.User.ManagerId == c.Id))
         : db.Devices.Where(d => d.Assignments.Any(a => a.IsActive && a.UserId == c.Id));
 
+    /// <summary>GPS reports of devices the caller may read (same scope as sensor data).</summary>
+    public static IQueryable<GpsLocationData> VisibleGpsLocations(this VayuVataDbContext db, CurrentUser c) =>
+        c.IsSuperAdmin ? db.GpsLocationData
+        : db.GpsLocationData.Where(g => db.DataDevices(c).Select(d => d.DeviceId).Contains(g.DeviceCode));
+
     public static IQueryable<SensorData> VisibleSensorData(this VayuVataDbContext db, CurrentUser c) =>
         c.IsSuperAdmin ? db.SensorData
         : db.SensorData.Where(s => db.DataDevices(c).Select(d => d.DeviceId).Contains(s.DeviceCode));

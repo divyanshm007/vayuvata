@@ -77,6 +77,7 @@ SET XACT_ABORT ON; BEGIN TRAN;
 DECLARE @u TABLE (Id int PRIMARY KEY); INSERT @u SELECT Id FROM Users WHERE Email LIKE '%@vvtest.local';
 DECLARE @d TABLE (Id int PRIMARY KEY, Code nvarchar(64)); INSERT @d SELECT Id, DeviceId FROM Devices WHERE DeviceId LIKE 'VVTEST-%';
 IF OBJECT_ID('dbo.ManipulatedSensorData') IS NOT NULL DELETE FROM ManipulatedSensorData WHERE device_id IN (SELECT Code FROM @d);
+IF OBJECT_ID('dbo.GpsLocationData') IS NOT NULL DELETE FROM GpsLocationData WHERE device_id IN (SELECT Code FROM @d);
 DELETE FROM SensorData WHERE device_id IN (SELECT Code FROM @d);
 DELETE FROM DeviceAssignments WHERE DeviceRecordId IN (SELECT Id FROM @d) OR UserId IN (SELECT Id FROM @u) OR AssignedByUserId IN (SELECT Id FROM @u);
 DELETE FROM RefreshTokens WHERE UserId IN (SELECT Id FROM @u) $tok;
@@ -516,7 +517,7 @@ try {
 
     # --- OpenAPI accuracy ---
     $opCount = 0; foreach ($pp in $sw.Json.paths.PSObject.Properties) { $opCount += @($pp.Value.PSObject.Properties).Count }
-    Check 'W04b' 'OpenAPI documents exactly the 31 implemented operations (the 30 original + change-password)' ($opCount -eq 31) "operations=$opCount"
+    Check 'W04b' 'OpenAPI documents exactly the 33 implemented operations (the 30 original + change-password + 2 GPS), or 34 when the separately developed GET /devices/{id}/key-hash is also present' ($opCount -eq $(if ($sw.Json.paths.PSObject.Properties.Name -contains '/api/v1/devices/{id}/key-hash') { 34 } else { 33 })) "operations=$opCount"
     $ing = $sw.Json.paths.'/api/v1/sensor-data'.post
     Check 'W11a' 'Ingestion is documented with the X-Device-Key scheme, not Bearer' (($ing.security | ConvertTo-Json -Compress -Depth 6) -match 'DeviceKey' -and ($ing.security | ConvertTo-Json -Compress -Depth 6) -notmatch 'Bearer' -and $sw.Json.components.securitySchemes.DeviceKey.name -eq 'X-Device-Key' -and $sw.Json.components.securitySchemes.DeviceKey.in -eq 'header')
     Check 'W11b' 'Protected operations require Bearer; login/refresh/health do not' (($sw.Json.paths.'/api/v1/auth/me'.get.security | ConvertTo-Json -Compress -Depth 6) -match 'Bearer' -and ($sw.Json.paths.'/api/v1/users'.get.security | ConvertTo-Json -Compress -Depth 6) -match 'Bearer' -and -not $sw.Json.paths.'/api/v1/auth/login'.post.security -and -not $sw.Json.paths.'/api/v1/health'.get.security -and -not $sw.Json.paths.'/api/v1/auth/refresh'.post.security)
@@ -764,7 +765,9 @@ try {
     Check 'M07' 'AuthHardening is in the EF history exactly once' ((Sql $Db "SELECT COUNT(*) FROM __EFMigrationsHistory WHERE MigrationId LIKE '%AuthHardening'") -eq '1')
 
     # ---- P3: database permissions of the runtime login ----
-    if ($uatMode) {
+    # SAFETY: these probes run REAL DDL (CREATE/ALTER/DROP) as the runtime login and expect it to be denied. They only run when that login is not db_owner.
+    $runtimeIsOwner = if ($uatMode) { (SqlApp "SELECT IS_MEMBER('db_owner')") -eq '1' } else { $false }
+    if ($uatMode -and -not $runtimeIsOwner) {
         $perm = SqlApp "SELECT CONCAT(IS_MEMBER('db_owner'), IS_MEMBER('db_ddladmin'), IS_MEMBER('db_securityadmin'), IS_SRVROLEMEMBER('sysadmin'))"
         Check 'G01' 'Runtime login is not db_owner / db_ddladmin / db_securityadmin / sysadmin' ($perm -eq '0000') "flags=$perm"
         $ddl1 = SqlApp "CREATE TABLE dbo.vvtest_probe (x int)"
@@ -782,7 +785,7 @@ try {
         $sess = Sql master "SELECT COUNT(*) FROM sys.dm_exec_sessions WHERE is_user_process = 1 AND login_name = '$($env:VV_APP_USER)'" -Admin
         Check 'G05' 'The API under test connects with the restricted runtime login (sessions of that login exist and its connection string was the only one given to the API)' ([int]$sess -ge 1 -and $env:ConnectionStrings__Default -like "*User Id=$($env:VV_APP_USER);*" -and -not $env:ConnectionStrings__Migration) "sessions: $sessAll"
     } else {
-        Skip 'G01-G05' 'Runtime-login permission checks' 'only meaningful in UAT mode (separate SQL logins)'
+        Skip 'G01-G05' 'Runtime-login permission checks' $(if ($runtimeIsOwner) { 'the runtime login was made db_owner at the owner''s request (2026-10-13); the DDL probes are NOT executed' } else { 'only meaningful in UAT mode (separate SQL logins)' })
     }
     $ix = Sql $Db "SELECT CONCAT((SELECT COUNT(*) FROM sys.indexes WHERE object_id=OBJECT_ID('dbo.Devices') AND name='IX_Devices_DeviceId'), '|', (SELECT COUNT(*) FROM sys.key_constraints WHERE name='AK_Devices_DeviceId' AND type='UQ'), '|', (SELECT COUNT(*) FROM sys.foreign_keys WHERE name='FK_SensorData_Devices_device_id'))"
     Check 'X01' 'Duplicate unique index IX_Devices_DeviceId is gone; AK_Devices_DeviceId (unique) and the SensorData foreign key remain' ($ix -eq '0|1|1') $ix
@@ -968,7 +971,7 @@ try {
         if ($o.Op.security | Where-Object { $_.PSObject.Properties.Name -contains 'Bearer' }) { $needs += '401', '403' }
         if ($o.Path -match '\{') { $needs += '404' }
         if ($o.Op.requestBody) { $needs += '400', '413' }
-        if ($o.Path -match '/auth/login$|/auth/refresh$|/auth/change-password$' -or ($o.Path -eq '/api/v1/sensor-data' -and $o.Method -eq 'POST')) { $needs += '429' }
+        if ($o.Path -match '/auth/login$|/auth/refresh$|/auth/change-password$' -or ($o.Path -in '/api/v1/sensor-data', '/api/v1/gps-data' -and $o.Method -eq 'POST')) { $needs += '429' }
         foreach ($n in $needs) { if ($rc2 -notcontains $n) { $docGaps += "$($o.Method) $($o.Path) missing $n" } }
         if (-not ($rc2 | Where-Object { $_ -like '2*' })) { $docGaps += "$($o.Method) $($o.Path) has no success response" }
         if (-not $o.Op.summary) { $docGaps += "$($o.Method) $($o.Path) has no summary" }
@@ -994,7 +997,9 @@ try {
     }
     Check 'O04' 'Compatibility with the Stage A contract: all 30 original operations, their documented status codes, security schemes and every schema property still exist (additive changes only)' ($contractLoss.Count -eq 0) ($contractLoss -join '; ')
     $newOps = @($ops | Where-Object { -not $base0.paths.($_.Path) -or -not $base0.paths.($_.Path).($_.Method.ToLower()) } | ForEach-Object { "$($_.Method) $($_.Path)" })
-    Check 'O05' 'Exactly one route was added: POST /api/v1/auth/change-password (31 operations, 25 paths)' (($newOps -join ',') -eq 'POST /api/v1/auth/change-password' -and @($ops).Count -eq 31 -and @($swb.Json.paths.PSObject.Properties).Count -eq 25) ($newOps -join ',')
+    $hasKh = [bool]$swb.Json.paths.'/api/v1/devices/{id}/key-hash'
+    $expectNew = (@('GET /api/v1/gps-data', 'POST /api/v1/auth/change-password', 'POST /api/v1/gps-data') + $(if ($hasKh) { 'GET /api/v1/devices/{id}/key-hash' })) | Sort-Object | ForEach-Object { $_ } | Join-String -Separator ','
+    Check 'O05' 'Only the expected routes were added since Stage A: change-password, POST + GET /gps-data (and GET /devices/{id}/key-hash when that separate change is present); nothing else' ((($newOps | Sort-Object) -join ',') -eq $expectNew -and @($ops).Count -eq $(if ($hasKh) { 34 } else { 33 }) -and @($swb.Json.paths.PSObject.Properties).Count -eq $(if ($hasKh) { 27 } else { 26 })) (($newOps | Sort-Object) -join ',')
     $cpOp = $swb.Json.paths.'/api/v1/auth/change-password'.post
     Check 'O06' 'change-password is documented: Bearer security, request body, 200 LoginResponse, 400/401/429' (($cpOp.security | ConvertTo-Json -Compress -Depth 5) -match 'Bearer' -and $cpOp.requestBody -and $cpOp.responses.'200' -and $cpOp.responses.'400' -and $cpOp.responses.'401' -and $cpOp.responses.'429')
 
@@ -1212,16 +1217,118 @@ ROLLBACK;
     Write-Host "      (HI01 info) real-data comparison: $histRun"
     $histAfter = Sql $Db "SELECT CONCAT(COUNT(*),'|',CHECKSUM_AGG(CHECKSUM(ID,device_id,recorded_at,aqi,aqi_status,pm25,pm10,humidity,temperature,outer_temperature,outer_humidity,co_ppm,created_at))) FROM dbo.SensorData WHERE device_id NOT LIKE 'VVTEST-%'"
     Check 'HI02' 'Existing SensorData history is unchanged (row count + checksum before and after the whole run) and nothing was backfilled (no manipulated row for any non-test reading)' ($histAfter -eq $histBefore -and (Sql $Db "SELECT COUNT(*) FROM dbo.ManipulatedSensorData WHERE device_id NOT LIKE 'VVTEST-%'") -eq '0') "before=$histBefore after=$histAfter"
-    if ($uatMode) {
+    if ($uatMode -and -not $runtimeIsOwner) {
         $rp = SqlApp "SELECT COUNT(*) FROM dbo.ManipulatedSensorData"
         $rd = SqlApp "DELETE FROM dbo.ManipulatedSensorData WHERE 1 = 0"
         Check 'PM01' 'Runtime login can read the manipulated table but cannot delete from it' ($rp -notlike 'ERR:*' -and $rd -match '^ERR:.*(denied|do not have permission)') "$rp / $rd"
     }
 
+    # ================= PHASE 7: GPS position reports (dbo.GpsLocationData, POST/GET /api/v1/gps-data) =================
+    $gd1 = New-Device $SA 'VVTEST-GPS-1'; $gd2 = New-Device $SA 'VVTEST-GPS-2'; $gd3 = New-Device $SA 'VVTEST-GPS-3'; $gd4 = New-Device $SA 'VVTEST-GPS-OFF'
+    $GK1 = $gd1.Json.apiKey; $GK2 = $gd2.Json.apiKey; $GK3 = $gd3.Json.apiKey; $GK4 = $gd4.Json.apiKey
+    $GD1 = $gd1.Json.id; $GD2 = $gd2.Json.id; $GD3 = $gd3.Json.id
+    $null = Api POST "/api/v1/devices/$GD1/assign" @{ userId = $U1id } $SA        # U1 (under Admin A1)
+    $null = Api POST "/api/v1/devices/$GD2/assign" @{ userId = $U3id } $SA        # U3 (under Admin A2)
+    $null = Api PATCH "/api/v1/devices/$($gd4.Json.id)/status" @{ isActive = $false } $SA
+    function Send-Gps([string]$dev, [string]$key, [hashtable]$b, [string]$root = $base) {
+        $body = @{ deviceId = $dev; recordedAt = (Ts 10); fix = $true; source = 'gps'; lat = 28.580707; lon = 77.398512; altM = 239.9; speedKmh = 0.0; signalPct = 83 }
+        foreach ($k in @($b.Keys)) { $body[$k] = $b[$k] }
+        $h = @{}; if ($key) { $h['X-Device-Key'] = $key }
+        ApiAt $root POST /api/v1/gps-data $body $null $h
+    }
+    $t1 = Ts 10
+    $g1 = Send-Gps 'VVTEST-GPS-1' $GK1 @{ recordedAt = $t1 }
+    $g1row = Sql $Db "SELECT CONCAT(device_id,'|',has_fix,'|',source,'|',latitude,'|',longitude,'|',altitude_m,'|',speed_kmh,'|',signal_pct) FROM dbo.GpsLocationData WHERE ID=$($g1.Json.id)"
+    Check 'GP01' 'Valid fix from the Pi payload: 201, report returned and stored with exact precision (6 / 6 / 1 / 1 decimals, tinyint signal)' ($g1.Status -eq 201 -and $g1.Json.fix -eq $true -and $g1.Json.lat -eq 28.580707 -and $g1.Json.lon -eq 77.398512 -and $g1.Json.altM -eq 239.9 -and $g1.Json.signalPct -eq 83 -and $g1.Json.deviceId -eq 'VVTEST-GPS-1' -and $g1row -eq 'VVTEST-GPS-1|1|gps|28.580707|77.398512|239.9|0.0|83') "$($g1.Status) $g1row"
+    Check 'GP01b' 'Timestamps are explicit UTC (end with Z); receivedAt is set by SQL Server' ($g1.Raw -match '"recordedAt":"[^"]+Z"' -and $g1.Raw -match '"receivedAt":"[^"]+Z"')
+    $g1dup = Send-Gps 'VVTEST-GPS-1' $GK1 @{ recordedAt = $t1; lat = 10.0; lon = 20.0 }
+    Check 'GP02' 'Re-sending the same (deviceId, recordedAt) is idempotent: 200 with the ORIGINAL stored report (id and position unchanged), still one row' ($g1dup.Status -eq 200 -and $g1dup.Json.id -eq $g1.Json.id -and $g1dup.Json.lat -eq 28.580707 -and (Sql $Db "SELECT COUNT(*) FROM dbo.GpsLocationData WHERE device_id='VVTEST-GPS-1' AND recorded_at='$($t1.TrimEnd('Z'))'") -eq '1') "$($g1dup.Status)"
+    $t2 = Ts 12
+    $par = 1..6 | ForEach-Object -ThrottleLimit 6 -Parallel {
+        $r = Invoke-WebRequest -Uri "$($using:base)/api/v1/gps-data" -Method POST -Headers @{ 'X-Device-Key' = $using:GK1 } -ContentType 'application/json' -SkipHttpErrorCheck `
+            -Body (@{ deviceId = 'VVTEST-GPS-1'; recordedAt = $using:t2; fix = $true; source = 'gps'; lat = 1.5; lon = 2.5 } | ConvertTo-Json)
+        [int]$r.StatusCode
+    }
+    Check 'GP02b' 'Six simultaneous uploads of one new report: exactly one 201, the rest 200, no 5xx, one row' (@($par | Where-Object { $_ -eq 201 }).Count -eq 1 -and @($par | Where-Object { $_ -notin 200, 201 }).Count -eq 0 -and (Sql $Db "SELECT COUNT(*) FROM dbo.GpsLocationData WHERE device_id='VVTEST-GPS-1' AND latitude=1.5") -eq '1') ($par -join ',')
+    $gNo = Send-Gps 'VVTEST-GPS-1' $GK1 @{ recordedAt = (Ts 9); fix = $false; lat = $null; lon = $null; altM = $null; speedKmh = $null; signalPct = 41 }
+    $gNoRow = Sql $Db "SELECT CONCAT(has_fix,'|',ISNULL(CAST(latitude AS varchar(20)),'N'),'|',ISNULL(CAST(longitude AS varchar(20)),'N'),'|',ISNULL(CAST(altitude_m AS varchar(20)),'N'),'|',ISNULL(CAST(speed_kmh AS varchar(20)),'N'),'|',signal_pct) FROM dbo.GpsLocationData WHERE ID=$($gNo.Json.id)"
+    Check 'GP03' 'A no-fix report (fix=false, null position) is accepted and stored with NULL position - never 0' ($gNo.Status -eq 201 -and $gNo.Json.fix -eq $false -and $null -eq $gNo.Json.lat -and $gNoRow -eq '0|N|N|N|N|41') "$($gNo.Status) $gNoRow"
+    $gNoBad = Send-Gps 'VVTEST-GPS-1' $GK1 @{ recordedAt = (Ts 8); fix = $false }
+    Check 'GP03b' 'fix=false together with coordinates is rejected (400)' ($gNoBad.Status -eq 400 -and $gNoBad.Json.errors.Lat)
+    $gCell = Send-Gps 'VVTEST-GPS-1' $GK1 @{ recordedAt = (Ts 7); source = 'cell'; altM = 0.0; signalPct = 55 }
+    Check 'GP04' 'source "cell" with altitude 0 is accepted' ($gCell.Status -eq 201 -and $gCell.Json.source -eq 'cell' -and $gCell.Json.altM -eq 0)
+    $bad = [ordered]@{
+        'lat > 90' = @{ lat = 91 }; 'lat < -90' = @{ lat = -90.5 }; 'lon > 180' = @{ lon = 181 }; 'lon < -180' = @{ lon = -180.1 }
+        'fix without lat' = @{ lat = $null }; 'fix without lon' = @{ lon = $null }; 'bad source' = @{ source = 'wifi' }; 'empty source' = @{ source = '' }
+        'signal 101' = @{ signalPct = 101 }; 'signal -1' = @{ signalPct = -1 }; 'negative speed' = @{ speedKmh = -1 }; 'altitude absurd' = @{ altM = 500000 }
+        'future recordedAt' = @{ recordedAt = (Ts -60) }; 'ancient recordedAt' = @{ recordedAt = '2019-12-31T23:59:59Z' }
+        'missing recordedAt' = @{ recordedAt = $null }; 'missing fix' = @{ fix = $null }; 'deviceId > 50' = @{ deviceId = ('D' * 51) }
+    }
+    $badOk = @(); $before = Sql $Db "SELECT COUNT(*) FROM dbo.GpsLocationData"
+    foreach ($k in $bad.Keys) {
+        $bodyBad = $bad[$k]; $dev = if ($bodyBad.ContainsKey('deviceId')) { $bodyBad.deviceId } else { 'VVTEST-GPS-1' }
+        $r = Send-Gps $dev $GK1 $bodyBad
+        if ($r.Status -ne 400 -or $r.Json.code -ne 'validation_failed') { $badOk += "$k -> $($r.Status)" }
+    }
+    Check 'GP05' "Validation: $($bad.Count) invalid payloads (coordinates out of range, missing fields, bad source/signal/speed/altitude, future or ancient time, long deviceId) are all 400 validation_failed" ($badOk.Count -eq 0) ($badOk -join '; ')
+    Check 'GP05b' 'None of the rejected payloads stored anything' ((Sql $Db "SELECT COUNT(*) FROM dbo.GpsLocationData") -eq $before)
+    $off = Send-Gps 'VVTEST-GPS-1' $GK1 @{ recordedAt = ((Get-Date).ToUniversalTime().AddMinutes(-6).ToString("yyyy-MM-ddTHH:mm:ss.fff") + '+05:30') }
+    $offRow = Sql $Db "SELECT DATEDIFF(MINUTE, recorded_at, DATEADD(MINUTE, -(330 + 6), SYSUTCDATETIME())) FROM dbo.GpsLocationData WHERE ID=$($off.Json.id)"
+    Check 'GP06' 'A timestamp with an explicit offset (+05:30) is converted to UTC before storing' ($off.Status -eq 201 -and [Math]::Abs([int]$offRow) -le 3) "diff=$offRow"
+    $au1 = Send-Gps 'VVTEST-GPS-1' $null @{ recordedAt = (Ts 6) }
+    $au2 = Send-Gps 'VVTEST-GPS-1' 'vv_wrongkey' @{ recordedAt = (Ts 6) }
+    $au3 = Send-Gps 'VVTEST-GPS-1' $GK2 @{ recordedAt = (Ts 6) }
+    $au4 = Send-Gps 'NO-SUCH-GPS-DEVICE' $GK1 @{ recordedAt = (Ts 6) }
+    $au5 = Send-Gps 'VVTEST-GPS-OFF' $GK4 @{ recordedAt = (Ts 6) }
+    $au6 = ApiAt $base POST /api/v1/gps-data @{ deviceId = 'VVTEST-GPS-1'; recordedAt = (Ts 6); fix = $true; source = 'gps'; lat = 1; lon = 1 } $SA
+    $hashAsKey = Send-Gps 'VVTEST-GPS-1' (Sql $Db "SELECT ApiKeyHash FROM Devices WHERE DeviceId='VVTEST-GPS-1'") @{ recordedAt = (Ts 6) }
+    Check 'GP07' 'Auth: missing key, wrong key, another device''s key, unknown device, a user JWT and the stored key hash are all 401 (same answer); an inactive device is 403' ($au1.Status -eq 401 -and $au2.Status -eq 401 -and $au3.Status -eq 401 -and $au4.Status -eq 401 -and $au6.Status -eq 401 -and $hashAsKey.Status -eq 401 -and $au5.Status -eq 403) "$($au1.Status)/$($au2.Status)/$($au3.Status)/$($au4.Status)/$($au6.Status)/$($hashAsKey.Status)/$($au5.Status)"
+    $rotK = Api POST "/api/v1/devices/$GD3/rotate-key" $null $SA
+    $rk = [string]$rotK.Json.apiKey
+    $okNew = Send-Gps -dev 'VVTEST-GPS-3' -key $rk -b @{ recordedAt = (Ts 5) }; $oldK = Send-Gps -dev 'VVTEST-GPS-3' -key $GK3 -b @{ recordedAt = (Ts 4) }
+    Check 'GP07b' 'Device-key lifecycle is shared with sensor data: after rotate-key the new key works for GPS and the old one stops' ($okNew.Status -eq 201 -and $oldK.Status -eq 401)
+    $bigR = Req POST /api/v1/gps-data -headers @{ 'X-Device-Key' = $GK1 } -rawBody ('{"deviceId":"VVTEST-GPS-1","fix":false,"source":"gps"}' + (' ' * 20000))
+    Check 'GP08' 'Oversized body -> 413' ($bigR.StatusCode -eq 413)
+
+    # public listener (the Pi reaches the API through the internet-facing port)
+    $pubG = Send-Gps 'VVTEST-GPS-1' $GK1 @{ recordedAt = (Ts 3) } "http://localhost:$pubPort"
+    $pubGet = Req GET /api/v1/gps-data -root "http://localhost:$pubPort" -token $SA
+    $pubLogin = Req POST /api/v1/auth/login -root "http://localhost:$pubPort" -body @{ email = $saEmail; password = 'x' }
+    $pubPut = Req PUT /api/v1/gps-data -root "http://localhost:$pubPort" -headers @{ 'X-Device-Key' = $GK1 }
+    Check 'GP09' 'Public listener: POST /api/v1/gps-data works (201); GET gps-data, login and other verbs on it remain an empty 404' ($pubG.Status -eq 201 -and $pubGet.StatusCode -eq 404 -and [string]$pubGet.Content -eq '' -and $pubLogin.StatusCode -eq 404 -and $pubPut.StatusCode -eq 404)
+
+    # reads and scoping
+    $null = Send-Gps 'VVTEST-GPS-2' $GK2 @{ recordedAt = (Ts 10); lat = 19.07; lon = 72.87 }
+    $nowIds = { param($tok, $q) @((Api GET "/api/v1/gps-data?pageSize=100$q" $null $tok).Json.items | ForEach-Object { $_.deviceId } | Sort-Object -Unique) -join ',' }
+    Check 'GP10' 'Visibility follows sensor-data rules: SuperAdmin sees all GPS devices; Admin A1 only their User''s device; User U1 only own; U3 only own; an unrelated standalone User and anonymous see none / 401' ((& $nowIds $SA '&deviceId=VVTEST-GPS-1') -eq 'VVTEST-GPS-1' -and ((& $nowIds $SA '') -match 'VVTEST-GPS-1,VVTEST-GPS-2') -and (& $nowIds $A1 '') -eq 'VVTEST-GPS-1' -and (& $nowIds $U1 '') -eq 'VVTEST-GPS-1' -and (& $nowIds $U3 '') -eq 'VVTEST-GPS-2' -and (& $nowIds $S1 '') -eq '' -and (Api GET /api/v1/gps-data).Status -eq 401) "A1=$(& $nowIds $A1 '') U3=$(& $nowIds $U3 '')"
+    Check 'GP10b' 'Query-string tampering cannot widen scope (deviceId of another Admin''s device returns nothing)' ((& $nowIds $A1 '&deviceId=VVTEST-GPS-2') -eq '' -and (& $nowIds $U1 '&deviceId=VVTEST-GPS-2') -eq '')
+    $fl = Api GET '/api/v1/gps-data?deviceId=VVTEST-GPS-1&fix=false&pageSize=100' $null $SA
+    $sc = Api GET '/api/v1/gps-data?deviceId=VVTEST-GPS-1&source=cell&pageSize=100' $null $SA
+    $asc = Api GET '/api/v1/gps-data?deviceId=VVTEST-GPS-1&sortDir=asc&pageSize=100' $null $SA
+    $desc = Api GET '/api/v1/gps-data?deviceId=VVTEST-GPS-1&pageSize=100' $null $SA
+    $rng = Api GET ('/api/v1/gps-data?deviceId=VVTEST-GPS-1&pageSize=100&from=' + [uri]::EscapeDataString((Get-Date).ToUniversalTime().AddMinutes(-9.5).ToString('o')) + '&to=' + [uri]::EscapeDataString((Get-Date).ToUniversalTime().AddMinutes(-6.5).ToString('o'))) $null $SA
+    Check 'GP11' 'Filters and sorting: fix=false -> only no-fix; source=cell -> only cell; asc/desc ordering by recordedAt; from/to window; includeTotal=false works' (@($fl.Json.items | Where-Object { $_.fix }).Count -eq 0 -and $fl.Json.items.Count -ge 1 -and @($sc.Json.items | Where-Object { $_.source -ne 'cell' }).Count -eq 0 -and $sc.Json.items.Count -ge 1 -and $asc.Json.items[0].recordedAt -lt $asc.Json.items[-1].recordedAt -and $desc.Json.items[0].recordedAt -gt $desc.Json.items[-1].recordedAt -and $rng.Json.totalCount -ge 2 -and $null -eq (Api GET '/api/v1/gps-data?pageSize=2&includeTotal=false' $null $SA).Json.totalCount)
+    Check 'GP11b' 'Invalid source filter -> 400; invalid fix filter -> 400' ((Api GET '/api/v1/gps-data?source=wifi' $null $SA).Status -eq 400 -and (Api GET '/api/v1/gps-data?fix=maybe' $null $SA).Status -eq 400)
+    $null = Send-Gps 'VVTEST-GPS-1' $GK1 @{ recordedAt = (Ts 2); fix = $false; lat = $null; lon = $null; altM = $null; speedKmh = $null }
+    $lat1 = Api GET '/api/v1/gps-data?deviceId=VVTEST-GPS-1&fix=true&pageSize=1' $null $U1
+    $lat2 = Api GET '/api/v1/gps-data?deviceId=VVTEST-GPS-1&pageSize=1' $null $SA
+    Check 'GP12' 'Latest position = GET with pageSize=1 (newest first): fix=true returns the newest real fix, without the filter the newest report (the no-fix one); another Admin''s User gets nothing; anonymous 401' ($lat1.Status -eq 200 -and $lat1.Json.items.Count -eq 1 -and $lat1.Json.items[0].fix -eq $true -and $lat2.Json.items[0].fix -eq $false -and $lat2.Json.items[0].recordedAt -gt $lat1.Json.items[0].recordedAt -and (Api GET '/api/v1/gps-data?deviceId=VVTEST-GPS-1&pageSize=1' $null $U3).Json.items.Count -eq 0 -and (Api GET '/api/v1/gps-data?pageSize=1').Status -eq 401) "$($lat1.Status)"
+    Check 'GP13' 'Every report carries its deviceId (response and table) and the response has no internal fields beyond the payload + id/receivedAt' ((@($lat1.Json.items[0].PSObject.Properties.Name | Sort-Object) -join ',') -eq 'altM,deviceId,fix,id,lat,lon,receivedAt,recordedAt,signalPct,source,speedKmh' -and $lat1.Json.items[0].deviceId -eq 'VVTEST-GPS-1')
+
+    # database level
+    $gcols = Sql $Db "SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY column_id) FROM sys.columns WHERE object_id=OBJECT_ID('dbo.GpsLocationData')"
+    Check 'GP14' 'Table dbo.GpsLocationData has the designed columns' ($gcols -eq 'ID,device_id,recorded_at,received_at,has_fix,source,latitude,longitude,altitude_m,speed_kmh,signal_pct') $gcols
+    $gi = "INSERT dbo.GpsLocationData (device_id,recorded_at,has_fix,source,latitude,longitude)"
+    Check 'GP15' 'The database itself rejects: duplicate (device, time), latitude 91, longitude 181, fix without position, no-fix with position, unknown source, signal 101, unregistered device' ((DbTry "$gi SELECT device_id,recorded_at,has_fix,source,latitude,longitude FROM dbo.GpsLocationData WHERE ID=$($g1.Json.id)") -eq 'BLOCKED' -and (DbTry "$gi VALUES (N'VVTEST-GPS-1','2021-01-01T00:00:01',1,'gps',91,1)") -eq 'BLOCKED' -and (DbTry "$gi VALUES (N'VVTEST-GPS-1','2021-01-01T00:00:02',1,'gps',1,181)") -eq 'BLOCKED' -and (DbTry "$gi VALUES (N'VVTEST-GPS-1','2021-01-01T00:00:03',1,'gps',NULL,NULL)") -eq 'BLOCKED' -and (DbTry "$gi VALUES (N'VVTEST-GPS-1','2021-01-01T00:00:04',0,'gps',1,1)") -eq 'BLOCKED' -and (DbTry "$gi VALUES (N'VVTEST-GPS-1','2021-01-01T00:00:05',1,'wifi',1,1)") -eq 'BLOCKED' -and (DbTry "INSERT dbo.GpsLocationData (device_id,recorded_at,has_fix,source,signal_pct) VALUES (N'VVTEST-GPS-1','2021-01-01T00:00:06',0,'gps',101)") -eq 'BLOCKED' -and (DbTry "$gi VALUES (N'NOT-REGISTERED',N'2021-01-01T00:00:07',1,'gps',1,1)") -eq 'BLOCKED' -and (DbTry "$gi VALUES (N'VVTEST-GPS-1','2021-01-01T00:00:08',1,'gps',1,1)") -eq 'ALLOWED')
+    Check 'GP16b' 'GPS storage is plain: NO trigger on dbo.GpsLocationData (the only table trigger on SensorData/Users/Devices side is untouched)' ((Sql $Db "SELECT COUNT(*) FROM sys.triggers WHERE parent_id=OBJECT_ID('dbo.GpsLocationData')") -eq '0')
+    Check 'GP16' 'GPS API does not touch sensor data: no SensorData / ManipulatedSensorData rows for the GPS devices' ((Sql $Db "SELECT COUNT(*) FROM dbo.SensorData WHERE device_id LIKE 'VVTEST-GPS-%'") -eq '0' -and (Sql $Db "SELECT COUNT(*) FROM dbo.ManipulatedSensorData WHERE device_id LIKE 'VVTEST-GPS-%'") -eq '0')
+    $swg = Api GET /swagger/v1/swagger.json
+    $gp = $swg.Json.paths.'/api/v1/gps-data';     Check 'GP17' 'OpenAPI: POST /gps-data uses the DeviceKey scheme (not Bearer) with 200/201/400/401/403/413/429/500; GET uses Bearer; request schema documents every field' (($gp.post.security | ConvertTo-Json -Compress -Depth 6) -match 'DeviceKey' -and ($gp.post.security | ConvertTo-Json -Compress -Depth 6) -notmatch 'Bearer' -and $gp.post.responses.'200' -and $gp.post.responses.'201' -and $gp.post.responses.'403' -and $gp.post.responses.'413' -and $gp.post.responses.'429' -and ($gp.get.security | ConvertTo-Json -Compress -Depth 6) -match 'Bearer' -and @($swg.Json.components.schemas.CreateGpsLocationRequest.properties.PSObject.Properties.Name).Count -eq 9)
+
     # ================= SCRIPTS PARITY =================
     $sdb = 'tempdb'   # scratch tables only; removed again in the finally block
     foreach ($f in 'CreateTables.sql', 'CreateIndexes.sql') { $o = sqlcmd -S $SqlServer @adminAuth -C -I -d $sdb -b -i (Join-Path $project "Database/$f") 2>&1; if ($LASTEXITCODE -ne 0) { throw "$f failed: $o" } }
-    $tl = "'Users','Devices','DeviceAssignments','SensorData','ManipulatedSensorData','RefreshTokens'"
+    $tl = "'Users','Devices','DeviceAssignments','SensorData','ManipulatedSensorData','GpsLocationData','RefreshTokens'"
     $schemaQ = "SELECT STRING_AGG(CONCAT(TABLE_NAME,'.',COLUMN_NAME,':',DATA_TYPE,'(',ISNULL(CHARACTER_MAXIMUM_LENGTH,0),',',ISNULL(NUMERIC_PRECISION,0),',',ISNULL(NUMERIC_SCALE,0),',',ISNULL(DATETIME_PRECISION,0),')',IS_NULLABLE), ';') WITHIN GROUP (ORDER BY TABLE_NAME, COLUMN_NAME) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME IN ($tl)"
     $idxQ = "SELECT STRING_AGG(CONCAT(OBJECT_NAME(object_id),'.',name,':',is_unique,':',ISNULL(filter_definition,'')), ';') WITHIN GROUP (ORDER BY OBJECT_NAME(object_id), name) FROM sys.indexes WHERE name IS NOT NULL AND is_primary_key = 0 AND is_unique_constraint = 0 AND OBJECT_NAME(object_id) IN ($tl)"
     Check 'W08' 'Hand-written SQL scripts produce the same columns as the EF migration' ((Sql $Db $schemaQ) -eq (Sql $sdb $schemaQ -Admin))
@@ -1236,7 +1343,7 @@ finally {
     $errLog = Join-Path $runDir 'app.err.log'
     $leak = Select-String -Path $log, $errLog -Pattern 'StackTrace|   at VayuVata' -ErrorAction SilentlyContinue
     if ($results.Count -gt 0) { Check 'W10' 'No unhandled exceptions / stack traces in application log' (-not $leak) (($leak | Select-Object -First 2 | ForEach-Object { $_.Line }) -join ' | ') }
-    Sql tempdb "DROP TABLE IF EXISTS dbo.ManipulatedSensorData, dbo.RefreshTokens, dbo.SensorData, dbo.DeviceAssignments, dbo.Users, dbo.Devices, dbo.__EFMigrationsHistory" -Admin | Out-Null
+    Sql tempdb "DROP TABLE IF EXISTS dbo.GpsLocationData, dbo.ManipulatedSensorData, dbo.RefreshTokens, dbo.SensorData, dbo.DeviceAssignments, dbo.Users, dbo.Devices, dbo.__EFMigrationsHistory" -Admin | Out-Null
     Remove-TestData $tokenBaseline $saLastLogin $saUpdated
     $left = Sql $Db "SELECT (SELECT COUNT(*) FROM Users WHERE Email LIKE '%@vvtest.local') + (SELECT COUNT(*) FROM Devices WHERE DeviceId LIKE 'VVTEST-%') + (SELECT COUNT(*) FROM SensorData WHERE device_id LIKE 'VVTEST-%')"
     $saCnt = Sql $Db "SELECT COUNT(*) FROM Users WHERE Role='SuperAdmin' AND IsActive=1"

@@ -12,13 +12,16 @@ public class PublicListenerGuard(RequestDelegate next, IConfiguration config)
 {
     private readonly int _port = config.GetValue("PublicListener:Port", 0);
     private readonly string _allowedPath = config.GetValue("PublicListener:AllowedPath", "/api/v1/sensor-data")!;
+    /// <summary>Second device-upload endpoint (GPS position reports); same rules: POST only, device key required by the endpoint itself.</summary>
+    private const string GpsPath = "/api/v1/gps-data";
 
     public Task Invoke(HttpContext ctx)
     {
         if (_port == 0 || ctx.Connection.LocalPort != _port) return next(ctx);
 
         var allowed = HttpMethods.IsPost(ctx.Request.Method)
-                      && string.Equals(ctx.Request.Path.Value, _allowedPath, StringComparison.OrdinalIgnoreCase);
+                      && (string.Equals(ctx.Request.Path.Value, _allowedPath, StringComparison.OrdinalIgnoreCase)
+                          || string.Equals(ctx.Request.Path.Value, GpsPath, StringComparison.OrdinalIgnoreCase));
         if (allowed) return next(ctx);
 
         ctx.Response.StatusCode = StatusCodes.Status404NotFound;   // empty body: reveals nothing about the private API

@@ -279,3 +279,17 @@ Every reading inserted into `dbo.SensorData` (API ingestion or direct SQL, one r
 * Apply: `VayuVata --migrate` (or `/opt/vayuvata-uat/bin/migrate.sh apply` on UAT). Re-running is a no-op; the procedure and trigger scripts are `CREATE OR ALTER`.
 * Rollback (dev/UAT only, migration login): `dotnet ef database update AuthHardening` runs the migration's Down, which drops the trigger, procedure, type and table.
 * Firmware note: `Tests/firmware/calculateAQI_INDIA.cpp` is a verbatim copy of the firmware function (the AQI test oracle). The firmware file in `Downloads` sends `rs485_temperature` / `rs485_humidity` in snake_case to the old Node endpoint; the .NET API stores the outer sensor as `outer_temperature` / `outer_humidity` (camelCase request names). No contract change was made here.
+
+## GPS position reports (`dbo.GpsLocationData`)
+
+Plain storage for the Raspberry Pi tracker - **only push and get, no trigger, no processing**.
+
+| | |
+|---|---|
+| `POST /api/v1/gps-data` | Pi uploads one report per minute. Auth: header `X-Device-Key` (the device's own key from `POST /devices` / `rotate-key`; the device must be registered, `deviceId` ≤ 50 chars). Also reachable on the public port 5443 (the only other public route besides sensor-data) |
+| `GET /api/v1/gps-data` | JWT, scoped exactly like sensor data (SuperAdmin all; Admin their Users' devices; User own). Filters `deviceId`, `from`, `to`, `fix`, `source`, `sortDir`, `page`, `pageSize`, `includeTotal`; newest first - `?deviceId=X&fix=true&pageSize=1` = latest position |
+
+Payload: `deviceId, recordedAt (UTC ISO-8601, required, not in the future), fix (bool, required), source ("gps"|"cell"), lat, lon, altM, speedKmh, signalPct (0-100)`.
+`fix:false` = "no fix" report: lat/lon/altM/speedKmh must be null (stored NULL). Validation: lat -90..90, lon -180..180, speed ≥ 0, source gps|cell -> otherwise **400**.
+Responses: **201** stored, **200** duplicate `(deviceId, recordedAt)` (idempotent, returns the stored report), 400 bad payload, 401 bad/missing key (also unknown device), 403 inactive device, 413 body > 16 KB, 429 rate limit, 5xx server.
+Table columns: `ID, device_id (FK -> Devices.DeviceId), recorded_at (UTC), received_at (SQL Server UTC), has_fix, source, latitude decimal(9,6), longitude decimal(9,6), altitude_m decimal(7,1), speed_kmh decimal(6,1), signal_pct tinyint`; unique `(device_id, recorded_at)`; CHECK constraints for ranges, source and fix/position consistency. Migration `GpsLocationData`.

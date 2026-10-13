@@ -121,6 +121,26 @@ CREATE TABLE dbo.ManipulatedSensorData (
     CONSTRAINT FK_ManipulatedSensorData_SensorData_SourceSensorDataID FOREIGN KEY (SourceSensorDataID) REFERENCES dbo.SensorData (ID)
 );
 
+-- GPS / cell position reports (Raspberry Pi, one per device per minute). (device_id, recorded_at) unique = safe retries.
+CREATE TABLE dbo.GpsLocationData (
+    ID           bigint IDENTITY(1,1) NOT NULL,
+    device_id    nvarchar(64)  NOT NULL,
+    recorded_at  datetime2(3)  NOT NULL,                -- UTC time of the fix
+    received_at  datetime2(3)  NOT NULL CONSTRAINT DF_GpsLocationData_received_at DEFAULT SYSUTCDATETIME(),
+    has_fix      bit           NOT NULL,
+    source       nvarchar(8)   NOT NULL,                -- 'gps' | 'cell'
+    latitude     decimal(9,6)  NULL,
+    longitude    decimal(9,6)  NULL,
+    altitude_m   decimal(7,1)  NULL,
+    speed_kmh    decimal(6,1)  NULL,
+    signal_pct   tinyint       NULL,
+    CONSTRAINT PK_GpsLocationData PRIMARY KEY (ID),
+    CONSTRAINT CK_GpsLocationData_source CHECK ([source] IN ('gps','cell')),
+    CONSTRAINT CK_GpsLocationData_fix CHECK (([has_fix] = 1 AND [latitude] IS NOT NULL AND [longitude] IS NOT NULL) OR ([has_fix] = 0 AND [latitude] IS NULL AND [longitude] IS NULL)),
+    CONSTRAINT CK_GpsLocationData_ranges CHECK (([latitude] IS NULL OR [latitude] BETWEEN -90 AND 90) AND ([longitude] IS NULL OR [longitude] BETWEEN -180 AND 180) AND ([signal_pct] IS NULL OR [signal_pct] BETWEEN 0 AND 100) AND ([speed_kmh] IS NULL OR [speed_kmh] >= 0)),
+    CONSTRAINT FK_GpsLocationData_Devices_device_id FOREIGN KEY (device_id) REFERENCES dbo.Devices (DeviceId)
+);
+
 CREATE TABLE dbo.RefreshTokens (
     Id         int IDENTITY(1,1) NOT NULL,
     UserId     int NOT NULL,

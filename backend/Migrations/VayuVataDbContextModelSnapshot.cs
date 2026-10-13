@@ -113,6 +113,81 @@ namespace VayuVata.Migrations
                     b.ToTable("DeviceAssignments", (string)null);
                 });
 
+            modelBuilder.Entity("VayuVata.Models.GpsLocationData", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("ID");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<decimal?>("AltitudeM")
+                        .HasPrecision(7, 1)
+                        .HasColumnType("decimal(7,1)")
+                        .HasColumnName("altitude_m");
+
+                    b.Property<string>("DeviceCode")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasColumnName("device_id");
+
+                    b.Property<bool>("HasFix")
+                        .HasColumnType("bit")
+                        .HasColumnName("has_fix");
+
+                    b.Property<decimal?>("Latitude")
+                        .HasPrecision(9, 6)
+                        .HasColumnType("decimal(9,6)")
+                        .HasColumnName("latitude");
+
+                    b.Property<decimal?>("Longitude")
+                        .HasPrecision(9, 6)
+                        .HasColumnType("decimal(9,6)")
+                        .HasColumnName("longitude");
+
+                    b.Property<DateTime>("ReceivedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasColumnName("received_at")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<DateTime>("RecordedAt")
+                        .HasColumnType("datetime2(3)")
+                        .HasColumnName("recorded_at");
+
+                    b.Property<byte?>("SignalPct")
+                        .HasColumnType("tinyint")
+                        .HasColumnName("signal_pct");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("nvarchar(8)")
+                        .HasColumnName("source");
+
+                    b.Property<decimal?>("SpeedKmh")
+                        .HasPrecision(6, 1)
+                        .HasColumnType("decimal(6,1)")
+                        .HasColumnName("speed_kmh");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DeviceCode", "RecordedAt")
+                        .IsUnique()
+                        .HasDatabaseName("UX_GpsLocationData_device_recorded");
+
+                    b.ToTable("GpsLocationData", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_GpsLocationData_fix", "([has_fix] = 1 AND [latitude] IS NOT NULL AND [longitude] IS NOT NULL) OR ([has_fix] = 0 AND [latitude] IS NULL AND [longitude] IS NULL)");
+
+                            t.HasCheckConstraint("CK_GpsLocationData_ranges", "([latitude] IS NULL OR [latitude] BETWEEN -90 AND 90) AND ([longitude] IS NULL OR [longitude] BETWEEN -180 AND 180) AND ([signal_pct] IS NULL OR [signal_pct] BETWEEN 0 AND 100) AND ([speed_kmh] IS NULL OR [speed_kmh] >= 0)");
+
+                            t.HasCheckConstraint("CK_GpsLocationData_source", "[source] IN ('gps','cell')");
+                        });
+                });
+
             modelBuilder.Entity("VayuVata.Models.ManipulatedSensorData", b =>
                 {
                     b.Property<long>("ManipulatedId")
@@ -494,6 +569,18 @@ namespace VayuVata.Migrations
                     b.Navigation("Device");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("VayuVata.Models.GpsLocationData", b =>
+                {
+                    b.HasOne("VayuVata.Models.Device", "Device")
+                        .WithMany()
+                        .HasForeignKey("DeviceCode")
+                        .HasPrincipalKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Device");
                 });
 
             modelBuilder.Entity("VayuVata.Models.ManipulatedSensorData", b =>
