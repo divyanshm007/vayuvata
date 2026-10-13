@@ -113,6 +113,125 @@ namespace VayuVata.Migrations
                     b.ToTable("DeviceAssignments", (string)null);
                 });
 
+            modelBuilder.Entity("VayuVata.Models.ManipulatedSensorData", b =>
+                {
+                    b.Property<long>("ManipulatedId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("ManipulatedSensorDataID");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("ManipulatedId"));
+
+                    b.Property<int?>("Aqi")
+                        .HasColumnType("int")
+                        .HasColumnName("aqi");
+
+                    b.Property<string>("AqiStatus")
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)")
+                        .HasColumnName("aqi_status");
+
+                    b.Property<decimal?>("CoPpm")
+                        .HasPrecision(10, 4)
+                        .HasColumnType("decimal(10,4)")
+                        .HasColumnName("co_ppm");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2(3)")
+                        .HasColumnName("created_at");
+
+                    b.Property<DateOnly>("DataDate")
+                        .HasColumnType("date")
+                        .HasColumnName("data_date");
+
+                    b.Property<TimeOnly>("DataTime")
+                        .HasColumnType("time(3)")
+                        .HasColumnName("data_time");
+
+                    b.Property<string>("DeviceCode")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasColumnName("device_id");
+
+                    b.Property<decimal?>("Humidity")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("decimal(5,2)")
+                        .HasColumnName("humidity");
+
+                    b.Property<long>("Id")
+                        .HasColumnType("bigint")
+                        .HasColumnName("ID");
+
+                    b.Property<decimal?>("No2Ppm")
+                        .HasPrecision(10, 4)
+                        .HasColumnType("decimal(10,4)")
+                        .HasColumnName("no2_ppm");
+
+                    b.Property<decimal?>("OuterHumidity")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("decimal(5,2)")
+                        .HasColumnName("outer_humidity");
+
+                    b.Property<decimal?>("OuterTemperature")
+                        .HasPrecision(6, 2)
+                        .HasColumnType("decimal(6,2)")
+                        .HasColumnName("outer_temperature");
+
+                    b.Property<decimal?>("Pm10")
+                        .HasPrecision(8, 2)
+                        .HasColumnType("decimal(8,2)")
+                        .HasColumnName("pm10");
+
+                    b.Property<decimal?>("Pm25")
+                        .HasPrecision(8, 2)
+                        .HasColumnType("decimal(8,2)")
+                        .HasColumnName("pm25");
+
+                    b.Property<DateTime>("ProcessedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasColumnName("processed_at")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<DateTime>("RecordedAt")
+                        .HasColumnType("datetime2(3)")
+                        .HasColumnName("recorded_at");
+
+                    b.Property<decimal?>("So2Ppm")
+                        .HasPrecision(10, 4)
+                        .HasColumnType("decimal(10,4)")
+                        .HasColumnName("so2_ppm");
+
+                    b.Property<long>("SourceSensorDataId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("SourceSensorDataID");
+
+                    b.Property<decimal?>("Temperature")
+                        .HasPrecision(6, 2)
+                        .HasColumnType("decimal(6,2)")
+                        .HasColumnName("temperature");
+
+                    b.Property<decimal?>("TvocPpb")
+                        .HasPrecision(10, 2)
+                        .HasColumnType("decimal(10,2)")
+                        .HasColumnName("tvoc_ppb");
+
+                    b.HasKey("ManipulatedId");
+
+                    b.HasIndex("SourceSensorDataId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ManipulatedSensorData_Source");
+
+                    b.HasIndex("DeviceCode", "RecordedAt")
+                        .HasDatabaseName("IX_ManipulatedSensorData_device_recorded");
+
+                    b.ToTable("ManipulatedSensorData", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ManipulatedSensorData_ID", "[ID] = [SourceSensorDataID]");
+                        });
+                });
+
             modelBuilder.Entity("VayuVata.Models.RefreshToken", b =>
                 {
                     b.Property<int>("Id")
@@ -265,7 +384,12 @@ namespace VayuVata.Migrations
                         .IsUnique()
                         .HasDatabaseName("UX_SensorData_device_recorded");
 
-                    b.ToTable("SensorData", (string)null);
+                    b.ToTable("SensorData", null, t =>
+                        {
+                            t.HasTrigger("TR_SensorData_AfterInsert");
+                        });
+
+                    b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
             modelBuilder.Entity("VayuVata.Models.User", b =>
@@ -370,6 +494,17 @@ namespace VayuVata.Migrations
                     b.Navigation("Device");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("VayuVata.Models.ManipulatedSensorData", b =>
+                {
+                    b.HasOne("VayuVata.Models.SensorData", "Source")
+                        .WithMany()
+                        .HasForeignKey("SourceSensorDataId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Source");
                 });
 
             modelBuilder.Entity("VayuVata.Models.RefreshToken", b =>

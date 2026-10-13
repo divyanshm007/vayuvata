@@ -8,7 +8,8 @@ public class SensorDataConfiguration : IEntityTypeConfiguration<SensorData>
 {
     public void Configure(EntityTypeBuilder<SensorData> b)
     {
-        b.ToTable("SensorData");
+        // The INSERT trigger must be declared so EF Core does not use an OUTPUT clause (not allowed on tables with triggers).
+        b.ToTable("SensorData", t => t.HasTrigger("TR_SensorData_AfterInsert"));
         b.HasKey(s => s.Id);
         b.Property(s => s.Id).HasColumnName("ID").UseIdentityColumn();
         b.Property(s => s.DeviceCode).HasColumnName("device_id").IsRequired().HasMaxLength(64);

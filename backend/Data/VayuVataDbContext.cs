@@ -10,6 +10,7 @@ public class VayuVataDbContext(DbContextOptions<VayuVataDbContext> options) : Db
     public DbSet<Device> Devices => Set<Device>();
     public DbSet<DeviceAssignment> DeviceAssignments => Set<DeviceAssignment>();
     public DbSet<SensorData> SensorData => Set<SensorData>();
+    public DbSet<ManipulatedSensorData> ManipulatedSensorData => Set<ManipulatedSensorData>();
     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)

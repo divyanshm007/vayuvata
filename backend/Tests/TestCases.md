@@ -177,3 +177,18 @@ The script first runs the explicit `--migration-status` / `--migrate` commands, 
 | A19, A19b | Login rate limit and 429 body/Retry-After/headers (throwaway instance with limit 5) |
 
 `S21b` is reported as **skipped**: the UAT `SensorData.created_at` default was changed outside the migrations to `UTC + 330 min`; it is reported, not altered.
+
+## SQL trigger + stored procedure (`dbo.ManipulatedSensorData`)
+
+| ID | Scenario |
+|---|---|
+| AQ00 | Oracle is parsed from the firmware source (6+6 `map()` intervals, 5 status thresholds) |
+| TR01-TR08 | Objects exist; 18 source columns + metadata; types/precision/nullability preserved; one AFTER INSERT trigger only, recursive triggers off; thin trigger / no cursor / no commit; constraints; **one 130-row multi-row INSERT** creates 130 manipulated rows; no duplicates |
+| AQ01-AQ04 | AQI and status equal the firmware for every PM2.5 / PM10 breakpoint on both sides, fractional, negative and >500 values and mixed pairs (results in `AqiBoundaryResults.md`); all six statuses exercised; procedure constants equal the firmware's 12 intervals |
+| NU01-NU02 | NULL PM -> NULL aqi/status (device-reported value ignored); NULL stays NULL, 0 stays 0; fully populated reading copied exactly |
+| CP01-CP03 | All non-calculated columns identical to the source (set difference both ways), `processed_at`, DB rejects duplicate / orphan manipulated rows |
+| API01-API04 | Real API ingestion (restricted login) fires the trigger; AQI calculated not taken from request; source row untouched; duplicate 409 creates nothing; reading without PM -> NULL AQI |
+| ID01 | Reprocessing the same ids adds nothing and does not modify rows |
+| FA01-FA02 | Unknown id: all-or-nothing error 51020; processing failure inside the trigger (transient CHECK, rolled back) also fails the source insert |
+| HI01-HI02 | Dry run on the real 498 historical readings in a ROLLED-BACK transaction (calculated vs device-reported AQI); history checksum unchanged, no backfill |
+| PM01 | Runtime login can read the table, cannot delete from it |

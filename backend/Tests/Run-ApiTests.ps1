@@ -76,6 +76,7 @@ function Remove-TestData([object]$tokenBaseline = $null, [string]$saLastLogin = 
 SET XACT_ABORT ON; BEGIN TRAN;
 DECLARE @u TABLE (Id int PRIMARY KEY); INSERT @u SELECT Id FROM Users WHERE Email LIKE '%@vvtest.local';
 DECLARE @d TABLE (Id int PRIMARY KEY, Code nvarchar(64)); INSERT @d SELECT Id, DeviceId FROM Devices WHERE DeviceId LIKE 'VVTEST-%';
+IF OBJECT_ID('dbo.ManipulatedSensorData') IS NOT NULL DELETE FROM ManipulatedSensorData WHERE device_id IN (SELECT Code FROM @d);
 DELETE FROM SensorData WHERE device_id IN (SELECT Code FROM @d);
 DELETE FROM DeviceAssignments WHERE DeviceRecordId IN (SELECT Id FROM @d) OR UserId IN (SELECT Id FROM @u) OR AssignedByUserId IN (SELECT Id FROM @u);
 DELETE FROM RefreshTokens WHERE UserId IN (SELECT Id FROM @u) $tok;
@@ -147,6 +148,7 @@ Write-Host "== Running against database $Db (no drops; tagged test data only) - 
 if ((Sql $Db "SELECT COUNT(*) FROM Users WHERE Role='SuperAdmin' AND IsActive=1") -ne '1') { throw "Expected exactly one active SuperAdmin in $Db. Start the backend once so it bootstraps the SuperAdmin, then re-run." }
 Remove-TestData
 $tokenBaseline = [int](Sql $Db "SELECT ISNULL(MAX(Id),0) FROM RefreshTokens")
+$histBefore = Sql $Db "SELECT CONCAT(COUNT(*),'|',CHECKSUM_AGG(CHECKSUM(ID,device_id,recorded_at,aqi,aqi_status,pm25,pm10,humidity,temperature,outer_temperature,outer_humidity,co_ppm,created_at))) FROM SensorData WHERE device_id NOT LIKE 'VVTEST-%'"   # existing readings must be byte-for-byte unchanged by the whole run (HI02)
 $saLastLogin = Sql $Db "SELECT ISNULL(CHAR(39) + CONVERT(varchar(23), LastLoginAt, 121) + CHAR(39), 'NULL') FROM Users WHERE Role='SuperAdmin'"
 $saUpdated = Sql $Db "SELECT ISNULL(CHAR(39) + CONVERT(varchar(23), UpdatedAt, 121) + CHAR(39), 'NULL') FROM Users WHERE Role='SuperAdmin'"
 Push-Location $project
@@ -771,8 +773,8 @@ try {
         $ddl4 = SqlApp "EXEC(N'CREATE TRIGGER dbo.TR_vvtest_probe ON dbo.Devices AFTER INSERT AS SELECT 1')"
         if ($ddl1 -notlike 'ERR:*') { $null = Sql $Db "DROP TABLE IF EXISTS dbo.vvtest_probe" }
         Check 'G02' 'Runtime login cannot run DDL: CREATE TABLE, ALTER TABLE, DROP INDEX, CREATE TRIGGER are all denied' (($ddl1, $ddl2, $ddl3, $ddl4 | Where-Object { $_ -match '^ERR:.*(denied|do not have permission)' }).Count -eq 4) "$ddl1 | $ddl2 | $ddl3 | $ddl4"
-        $del = foreach ($t in 'Users', 'Devices', 'DeviceAssignments', 'SensorData') { SqlApp "DELETE FROM dbo.$t WHERE 1 = 0" }
-        Check 'G03' 'Runtime login cannot DELETE users, devices, assignments or sensor readings (history cannot be erased through the API account)' (($del | Where-Object { $_ -match '^ERR:.*(denied|do not have permission)' }).Count -eq 4) ($del -join ' | ')
+        $del = foreach ($t in 'Users', 'Devices', 'DeviceAssignments', 'SensorData', 'ManipulatedSensorData') { SqlApp "DELETE FROM dbo.$t WHERE 1 = 0" }
+        Check 'G03' 'Runtime login cannot DELETE users, devices, assignments or sensor readings (history cannot be erased through the API account)' (($del | Where-Object { $_ -match '^ERR:.*(denied|do not have permission)' }).Count -eq 5) ($del -join ' | ')
         $rw = @(SqlApp "SELECT COUNT(*) FROM dbo.Users"; SqlApp "UPDATE dbo.Users SET UpdatedAt = UpdatedAt WHERE 1 = 0"; SqlApp "DELETE FROM dbo.RefreshTokens WHERE 1 = 0")
         Check 'G04' 'Runtime login keeps what the API needs: SELECT/UPDATE on tables and DELETE on RefreshTokens only' (($rw | Where-Object { $_ -like 'ERR:*' }).Count -eq 0) ($rw -join ' | ')
         $null = Api GET '/api/v1/users?pageSize=1' $null $SA
@@ -1049,16 +1051,184 @@ try {
     Get-NetTCPConnection -LocalPort $fPort -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
     if ($fApp -and -not $fApp.HasExited) { Stop-Process -Id $fApp.Id -Force -ErrorAction SilentlyContinue }
 
+    # ================= PHASE 6: SensorData INSERT trigger -> dbo.ProcessSensorData -> dbo.ManipulatedSensorData =================
+    # Oracle: the firmware's own calculateAQI_INDIA() text (Tests/firmware), parsed - breakpoints are not re-typed here.
+    $fwText = Get-Content (Join-Path $PSScriptRoot 'firmware/calculateAQI_INDIA.cpp') -Raw
+    function Parse-Branches([string]$var) {
+        $rx = [regex]"(?:if \(\w+ <= (\d+)\)\s*)?$var = map\(\w+,\s*(-?\d+),\s*(-?\d+),\s*(-?\d+),\s*(-?\d+)\)"
+        @($rx.Matches($fwText) | ForEach-Object { [pscustomobject]@{ Upper = $(if ($_.Groups[1].Success) { [long]$_.Groups[1].Value } else { [long]::MaxValue }); A = [long]$_.Groups[2].Value; B = [long]$_.Groups[3].Value; C = [long]$_.Groups[4].Value; D = [long]$_.Groups[5].Value } })
+    }
+    $br25 = Parse-Branches 'aqiPM25'; $br10 = Parse-Branches 'aqiPM10'
+    $stRx = [regex]'aqi <= (\d+)\)\s*return "([^"]+)"'
+    $stList = @($stRx.Matches($fwText) | ForEach-Object { [pscustomobject]@{ Upper = [long]$_.Groups[1].Value; Name = $_.Groups[2].Value } })
+    $stElse = ([regex]'else\s+return "([^"]+)"').Match($fwText).Groups[1].Value
+    function Fw-Map([long]$x, $br) {
+        foreach ($b in $br) { if ($x -le $b.Upper) { $q = [Math]::DivRem(($x - $b.A) * ($b.D - $b.C), ($b.B - $b.A)); return [long]($q.Item1 + $b.C) } }
+    }
+    function Fw-Aqi($pm25, $pm10) {
+        if ($null -eq $pm25 -or $null -eq $pm10) { return $null }
+        $a = Fw-Map ([long][Math]::Truncate([decimal]$pm25)) $br25; $b = Fw-Map ([long][Math]::Truncate([decimal]$pm10)) $br10
+        [Math]::Max($a, $b)
+    }
+    function Fw-Status($aqi) { if ($null -eq $aqi) { return $null }; foreach ($s in $stList) { if ($aqi -le $s.Upper) { return $s.Name } }; $stElse }
+    Check 'AQ00' 'Oracle parsed from the firmware text: 6 PM2.5 intervals, 6 PM10 intervals, 5 status thresholds + Severe' ($br25.Count -eq 6 -and $br10.Count -eq 6 -and $stList.Count -eq 5 -and $stElse -eq 'Severe') "$($br25.Count)/$($br10.Count)/$($stList.Count)/$stElse"
+
+    # ---- structure of the new database objects ----
+    $objs = Sql $Db "SELECT CONCAT((SELECT COUNT(*) FROM sys.tables WHERE name='ManipulatedSensorData'), (SELECT COUNT(*) FROM sys.types WHERE is_table_type=1 AND name='SensorDataIdList'), (SELECT COUNT(*) FROM sys.procedures WHERE name='ProcessSensorData'), (SELECT COUNT(*) FROM sys.triggers WHERE name='TR_SensorData_AfterInsert' AND parent_id=OBJECT_ID('dbo.SensorData')))"
+    Check 'TR01' 'Table, table type, procedure and trigger exist (applied by the migration)' ($objs -eq '1111') $objs
+    $mcols = Sql $Db "SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY column_id) FROM sys.columns WHERE object_id=OBJECT_ID('dbo.ManipulatedSensorData')"
+    Check 'TR02' 'ManipulatedSensorData has the 18 source columns (original names) plus ManipulatedSensorDataID, SourceSensorDataID and processed_at' ($mcols -eq 'ManipulatedSensorDataID,SourceSensorDataID,ID,device_id,data_date,data_time,recorded_at,aqi,aqi_status,pm10,pm25,no2_ppm,so2_ppm,co_ppm,tvoc_ppb,humidity,temperature,outer_temperature,outer_humidity,created_at,processed_at') $mcols
+    $typeCmp = Sql $Db "SELECT COUNT(*) FROM (SELECT c.name, c.system_type_id, c.max_length, c.precision, c.scale, c.is_nullable FROM sys.columns c WHERE c.object_id=OBJECT_ID('dbo.SensorData') AND c.name <> 'ID') a JOIN (SELECT c.name, c.system_type_id, c.max_length, c.precision, c.scale, c.is_nullable FROM sys.columns c WHERE c.object_id=OBJECT_ID('dbo.ManipulatedSensorData')) b ON a.name=b.name AND a.system_type_id=b.system_type_id AND a.max_length=b.max_length AND a.precision=b.precision AND a.scale=b.scale AND a.is_nullable=b.is_nullable"
+    Check 'TR03' 'Source data types, precision and nullability are preserved in all 17 copied columns (ID is the bigint copy of the source ID)' ($typeCmp -eq '17') $typeCmp
+    $trg = Sql $Db "SELECT CONCAT((SELECT COUNT(*) FROM sys.triggers WHERE parent_id=OBJECT_ID('dbo.SensorData')), '|', (SELECT STRING_AGG(te.type_desc, ',') FROM sys.trigger_events te JOIN sys.triggers t ON t.object_id=te.object_id WHERE t.name='TR_SensorData_AfterInsert'), '|', (SELECT is_instead_of_trigger FROM sys.triggers WHERE name='TR_SensorData_AfterInsert'), '|', (SELECT is_disabled FROM sys.triggers WHERE name='TR_SensorData_AfterInsert'), '|', (SELECT is_recursive_triggers_on FROM sys.databases WHERE name=DB_NAME()))"
+    Check 'TR04' 'Exactly one trigger on SensorData: AFTER INSERT only, enabled, database recursive triggers off' ($trg -eq '1|INSERT|0|0|0') $trg
+    # sqlcmd truncates long text columns, so the reviewed script files are inspected and the database copy is proven identical by length + checksum below.
+    $trgDef = Get-Content (Join-Path $project 'Database/Objects/03_TR_SensorData_AfterInsert.sql') -Raw
+    $prcDef = Get-Content (Join-Path $project 'Database/Objects/02_ProcessSensorData.sql') -Raw
+    $dbLen = Sql $Db "SELECT CONCAT(DATALENGTH(OBJECT_DEFINITION(OBJECT_ID('dbo.TR_SensorData_AfterInsert')))/2, '|', DATALENGTH(OBJECT_DEFINITION(OBJECT_ID('dbo.ProcessSensorData')))/2)"
+    $dl = $dbLen -split '\|'; $fl = @((($trgDef -replace "`r?`n","`r`n")).Length, (($prcDef -replace "`r?`n","`r`n")).Length)
+    # SQL Server stores "CREATE OR ALTER" as "CREATE" + blanks and appends a line break, so the stored text differs from the file by a few characters only.
+    Check 'TR05b' 'The objects in the database are the reviewed script files (stored length equals the file length within SQL Server''s CREATE OR ALTER normalisation, +-8 characters)' ([Math]::Abs([int]$dl[0] - $fl[0]) -le 8 -and [Math]::Abs([int]$dl[1] - $fl[1]) -le 8) "db=$dbLen files=$($fl -join '|')"
+    Check 'TR05' 'Trigger is a thin wrapper (no cursor, no AQI logic, never writes to SensorData); procedure has no cursor and never commits/rolls back/updates/deletes SensorData' ($trgDef -notmatch '(?i)cursor|CASE\s+WHEN|\b(UPDATE|DELETE)\b|INSERT\s+dbo\.SensorData' -and $trgDef -match 'ProcessSensorData' -and $prcDef -notmatch '(?i)DECLARE\s+\w+\s+CURSOR|COMMIT\s+TRAN|ROLLBACK\s+TRAN|BEGIN\s+TRAN\w*\s*[;\r\n]' -and $prcDef -notmatch '(?i)\bUPDATE\s+dbo\.SensorData|\bDELETE\s+(FROM\s+)?dbo\.SensorData')
+    $tconstr = Sql $Db "SELECT CONCAT((SELECT COUNT(*) FROM sys.indexes WHERE name='UX_ManipulatedSensorData_Source' AND is_unique=1), (SELECT COUNT(*) FROM sys.foreign_keys WHERE name='FK_ManipulatedSensorData_SensorData_SourceSensorDataID'), (SELECT COUNT(*) FROM sys.key_constraints WHERE name='PK_ManipulatedSensorData'), (SELECT COUNT(*) FROM sys.check_constraints WHERE name='CK_ManipulatedSensorData_ID'))"
+    Check 'TR06' 'Unique index on SourceSensorDataID, FK to SensorData, primary key and ID = SourceSensorDataID check exist' ($tconstr -eq '1111') $tconstr
+
+    # ---- test data ----
+    $aqD = New-Device $SA 'VVTEST-AQI-1'
+    $aqBase = '2020-06-01T00:00:00'
+    function Dv($v) { if ($null -eq $v) { 'NULL' } else { ([decimal]$v).ToString([Globalization.CultureInfo]::InvariantCulture) } }
+    $v25 = @(-5, -1, 0, 1, 15, 29, 29.99, 30, 30.5, 31, 32, 45, 59, 60, 60.99, 61, 62, 75, 89, 90, 91, 92, 105, 119, 120, 121, 122, 200, 249, 250, 251, 252, 300, 400, 499, 500, 501, 595)
+    $v10 = @(-5, 0, 1, 25, 49, 50, 50.5, 51, 52, 75, 99, 100, 101, 102, 150, 249, 250, 251, 252, 300, 349, 350, 351, 352, 400, 429, 430, 431, 432, 500, 501, 624)
+    $cases = [System.Collections.Generic.List[object]]::new()
+    foreach ($x in $v25) { $cases.Add(@($x, 0)) }
+    foreach ($y in $v10) { $cases.Add(@(0, $y)) }
+    0..59 | ForEach-Object { $cases.Add(@($v25[($_ * 7) % $v25.Count], $v10[($_ * 11) % $v10.Count])) }
+    $n = 0
+    $rowsSql = foreach ($c in $cases) {
+        $n++
+        "(N'VVTEST-AQI-1','2020-06-01','00:00:00',DATEADD(SECOND,$n,'$aqBase'),999,N'FromDevice',$(Dv $c[1]),$(Dv $c[0]),0.0123,0.0456,0.5,NULL,50.5,25.25,NULL,NULL)"
+    }
+    $cols = '(device_id,data_date,data_time,recorded_at,aqi,aqi_status,pm10,pm25,no2_ppm,so2_ppm,co_ppm,tvoc_ppb,humidity,temperature,outer_temperature,outer_humidity)'
+    $ins = Sql $Db "INSERT dbo.SensorData $cols VALUES $($rowsSql -join ','); SELECT @@ROWCOUNT"
+    $gotRows = Sql $Db "SELECT COUNT(*) FROM dbo.ManipulatedSensorData WHERE device_id='VVTEST-AQI-1'"
+    Check 'TR07' "ONE multi-row INSERT of $($cases.Count) readings creates exactly one manipulated row per reading (set based)" ($ins -eq "$($cases.Count)" -and $gotRows -eq "$($cases.Count)") "inserted=$ins processed=$gotRows"
+    $dupSrc = Sql $Db "SELECT COUNT(*) FROM (SELECT SourceSensorDataID FROM dbo.ManipulatedSensorData GROUP BY SourceSensorDataID HAVING COUNT(*) > 1) x"
+    Check 'TR08' 'No source reading has more than one manipulated row (whole table)' ($dupSrc -eq '0')
+
+    # ---- AQI parity with the firmware ----
+    $out = (Sql $Db "SELECT CONCAT(DATEDIFF(SECOND,'$aqBase',recorded_at), '|', pm25, '|', pm10, '|', ISNULL(CAST(aqi AS varchar(20)),'NULL'), '|', ISNULL(aqi_status,'NULL')) FROM dbo.ManipulatedSensorData WHERE device_id='VVTEST-AQI-1' ORDER BY recorded_at") -split "`n"
+    $aqiBad = @(); $stBad = @(); $report = [System.Text.StringBuilder]::new()
+    [void]$report.AppendLine('| # | pm25 | pm10 | firmware AQI | SQL AQI | firmware status | SQL status | result |'); [void]$report.AppendLine('|---|---|---|---|---|---|---|---|')
+    foreach ($line in $out) {
+        $f = $line -split '\|'; $idx = [int]$f[0]; $c = $cases[$idx - 1]
+        $exp = Fw-Aqi $c[0] $c[1]; $expSt = Fw-Status $exp
+        $okA = ("$exp" -eq $f[3]); $okS = ($expSt -eq $f[4])
+        if (-not $okA) { $aqiBad += "pm25=$($c[0]) pm10=$($c[1]) exp=$exp got=$($f[3])" }
+        if (-not $okS) { $stBad += "aqi=$exp exp=$expSt got=$($f[4])" }
+        [void]$report.AppendLine("| $idx | $($c[0]) | $($c[1]) | $exp | $($f[3]) | $expSt | $($f[4]) | $(if ($okA -and $okS) { 'PASS' } else { '**FAIL**' }) |")
+    }
+    Set-Content (Join-Path $PSScriptRoot 'AqiBoundaryResults.md') -Encoding utf8 -Value ("# AQI parity: SQL dbo.ProcessSensorData vs ESP32 calculateAQI_INDIA`n`nGenerated by ``Tests/Run-ApiTests.ps1`` (AQ01-AQ03) on $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz') against the UAT database. Expected values are computed from the parsed firmware source (``Tests/firmware/calculateAQI_INDIA.cpp``) with Arduino ``map()`` integer semantics.`n`n$($out.Count) readings, $(@($aqiBad).Count) AQI mismatches, $(@($stBad).Count) status mismatches.`n`n" + $report.ToString())
+    Check 'AQ01' "AQI from SQL equals the firmware's calculateAQI_INDIA for all $($out.Count) readings (every PM2.5 and PM10 breakpoint, both sides of each boundary, fractional values, negatives, > 500, mixed pairs)" ($out.Count -eq $cases.Count -and $aqiBad.Count -eq 0) (($aqiBad | Select-Object -First 5) -join '; ')
+    Check 'AQ02' 'aqi_status equals the firmware getAQIStatus for every reading (Good / Satisfactory / Moderate / Poor / Very Poor / Severe)' ($stBad.Count -eq 0) (($stBad | Select-Object -First 5) -join '; ')
+    $present = @($out | ForEach-Object { ($_ -split '\|')[4] } | Sort-Object -Unique)
+    Check 'AQ03' 'All six status values were exercised by the boundary set' ($present.Count -eq 6) ($present -join ',')
+    $lit = [regex]::Matches((Get-Content (Join-Path $PSScriptRoot 'firmware/calculateAQI_INDIA.cpp') -Raw), 'map\(\w+,\s*(\d+),\s*(\d+),\s*(\d+),\s*(\d+)\)') | ForEach-Object { "$($_.Groups[1].Value),$($_.Groups[2].Value),$($_.Groups[3].Value),$($_.Groups[4].Value)" }
+    $divs = [regex]::Matches($prcDef, '\*\s*(\d+)\s*/\s*(\d+)\s*\+\s*(\d+)') | ForEach-Object { "$($_.Groups[1].Value)/$($_.Groups[2].Value)/$($_.Groups[3].Value)" }
+    Check 'AQ04' 'The procedure encodes exactly the 12 firmware intervals (out-span / in-span / out-min of every map())' (@($divs).Count -eq 12 -and (@($lit | ForEach-Object { $p = $_ -split ','; "$([int]$p[3]-[int]$p[2])/$([int]$p[1]-[int]$p[0])/$($p[2])" } | Sort-Object) -join ' ') -eq (@($divs | Sort-Object) -join ' ')) "sql=$(@($divs | Sort-Object) -join ' ')"
+
+    # ---- NULL handling, no recalibration, all 18 fields copied ----
+    $nulls = Sql $Db @"
+INSERT dbo.SensorData $cols VALUES
+ (N'VVTEST-AQI-1','2020-07-01','00:00:00','2020-07-01T00:00:01',77,N'FromDevice',50,NULL,0.1,0.2,0,NULL,NULL,NULL,NULL,NULL),
+ (N'VVTEST-AQI-1','2020-07-01','00:00:00','2020-07-01T00:00:02',77,N'FromDevice',NULL,50,0.1,0.2,0,NULL,NULL,NULL,NULL,NULL),
+ (N'VVTEST-AQI-1','2020-07-01','00:00:00','2020-07-01T00:00:03',77,N'FromDevice',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL),
+ (N'VVTEST-AQI-1','2020-07-01','00:00:00','2020-07-01T00:00:04',NULL,NULL,23.45,12.34,1.2345,2.3456,3.4567,456.78,55.55,26.66,31.31,48.48);
+SELECT CONCAT(ISNULL(CAST(aqi AS varchar(10)),'N'), ISNULL(aqi_status,'N'), '|', ISNULL(CAST(co_ppm AS varchar(20)),'N'), '|', ISNULL(CAST(tvoc_ppb AS varchar(20)),'N')) FROM dbo.ManipulatedSensorData WHERE device_id='VVTEST-AQI-1' AND recorded_at BETWEEN '2020-07-01T00:00:01' AND '2020-07-01T00:00:03' ORDER BY recorded_at
+"@
+    $nl = $nulls -split "`n"
+    Check 'NU01' 'Missing PM2.5 and/or PM10 -> aqi and aqi_status stay NULL (no invented fallback, the device-reported 77 is ignored); other NULLs stay NULL and a real 0 stays 0' ($nl.Count -eq 3 -and $nl[0] -eq 'NN|0.0000|N' -and $nl[1] -eq 'NN|0.0000|N' -and $nl[2] -eq 'NN|N|N') ($nl -join ' ; ')
+    $full = Sql $Db "SELECT CONCAT(aqi,'|',aqi_status,'|',no2_ppm,'|',so2_ppm,'|',co_ppm,'|',tvoc_ppb,'|',humidity,'|',temperature,'|',outer_temperature,'|',outer_humidity) FROM dbo.ManipulatedSensorData WHERE device_id='VVTEST-AQI-1' AND recorded_at='2020-07-01T00:00:04'"
+    Check 'NU02' 'A fully populated reading: PM2.5 12.34 / PM10 23.45 give AQI 23 "Good" (max of 20 and 23) (computed - the source aqi was NULL) and every other measurement is copied unchanged with its precision (not recalibrated)' ($full -eq '23|Good|1.2345|2.3456|3.4567|456.78|55.55|26.66|31.31|48.48') $full
+    $diffA = Sql $Db "SELECT COUNT(*) FROM (SELECT ID,device_id,data_date,data_time,recorded_at,pm10,pm25,no2_ppm,so2_ppm,co_ppm,tvoc_ppb,humidity,temperature,outer_temperature,outer_humidity,created_at FROM dbo.SensorData WHERE device_id LIKE 'VVTEST-%' EXCEPT SELECT ID,device_id,data_date,data_time,recorded_at,pm10,pm25,no2_ppm,so2_ppm,co_ppm,tvoc_ppb,humidity,temperature,outer_temperature,outer_humidity,created_at FROM dbo.ManipulatedSensorData WHERE device_id LIKE 'VVTEST-%') x"
+    $diffB = Sql $Db "SELECT COUNT(*) FROM (SELECT ID,device_id,data_date,data_time,recorded_at,pm10,pm25,no2_ppm,so2_ppm,co_ppm,tvoc_ppb,humidity,temperature,outer_temperature,outer_humidity,created_at FROM dbo.ManipulatedSensorData WHERE device_id LIKE 'VVTEST-%' EXCEPT SELECT ID,device_id,data_date,data_time,recorded_at,pm10,pm25,no2_ppm,so2_ppm,co_ppm,tvoc_ppb,humidity,temperature,outer_temperature,outer_humidity,created_at FROM dbo.SensorData WHERE device_id LIKE 'VVTEST-%') x"
+    $cntS = Sql $Db "SELECT COUNT(*) FROM dbo.SensorData WHERE device_id LIKE 'VVTEST-%'"; $cntM = Sql $Db "SELECT COUNT(*) FROM dbo.ManipulatedSensorData WHERE device_id LIKE 'VVTEST-%'"
+    Check 'CP01' 'All 16 non-calculated source columns are copied exactly for every tagged reading (set difference both ways is empty, row counts equal, ID = source ID)' ($diffA -eq '0' -and $diffB -eq '0' -and $cntS -eq $cntM -and [int]$cntM -ge 130) "diff=$diffA/$diffB src=$cntS man=$cntM"
+    Check 'CP02' 'processed_at is set by SQL Server (UTC, within minutes of now); SourceSensorDataID equals ID' ((Sql $Db "SELECT COUNT(*) FROM dbo.ManipulatedSensorData WHERE device_id LIKE 'VVTEST-%' AND (processed_at < DATEADD(MINUTE,-30,SYSUTCDATETIME()) OR processed_at > DATEADD(MINUTE,5,SYSUTCDATETIME()) OR SourceSensorDataID <> ID)") -eq '0')
+    Check 'CP03' 'Database rejects a second manipulated row for the same source and a manipulated row without a source' ((DbTry "INSERT dbo.ManipulatedSensorData (SourceSensorDataID,ID,device_id,data_date,data_time,recorded_at,created_at) SELECT TOP 1 SourceSensorDataID,ID,device_id,data_date,data_time,recorded_at,created_at FROM dbo.ManipulatedSensorData WHERE device_id LIKE 'VVTEST-%'") -eq 'BLOCKED' -and (DbTry "INSERT dbo.ManipulatedSensorData (SourceSensorDataID,ID,device_id,data_date,data_time,recorded_at,created_at) VALUES (8000000000001,8000000000001,N'VVTEST-AQI-1','2020-01-01','00:00:00','2020-01-01','2020-01-01')") -eq 'BLOCKED')
+
+    # ---- the real API ingestion path (runtime login) fires the trigger; the AQI is calculated, not taken from the request ----
+    $apiR = Api POST /api/v1/sensor-data @{ deviceId = 'VVTEST-DEV-1'; recordedAt = (Ts 4); aqi = 999; aqiStatus = 'Hacked'; pm25 = 40; pm10 = 80; humidity = 51.5; temperature = 27.25; outerTemperature = 30.1; outerHumidity = 49.9; coPpm = 0.77 } $null @{ 'X-Device-Key' = $K1 }
+    $apiM = Sql $Db "SELECT CONCAT(aqi,'|',aqi_status,'|',pm25,'|',pm10,'|',humidity,'|',temperature,'|',outer_temperature,'|',outer_humidity,'|',co_ppm,'|',CASE WHEN tvoc_ppb IS NULL THEN 'N' ELSE 'V' END) FROM dbo.ManipulatedSensorData WHERE SourceSensorDataID=$($apiR.Json.id)"
+    $apiS = Sql $Db "SELECT CONCAT(aqi,'|',aqi_status) FROM dbo.SensorData WHERE ID=$($apiR.Json.id)"
+    Check 'API01' 'Posting through the API (restricted runtime login) creates the manipulated row automatically; AQI 80 "Satisfactory" is CALCULATED from PM2.5 40 / PM10 80, not the 999 / "Hacked" the request carried; all other values copied' ($apiR.Status -eq 201 -and $apiM -eq '80|Satisfactory|40.00|80.00|51.50|27.25|30.10|49.90|0.7700|N') "$($apiR.Status) $apiM"
+    Check 'API02' 'The original SensorData row is stored exactly as received (999 / "Hacked" untouched); the trigger never modifies it' ($apiS -eq '999|Hacked') $apiS
+    $apiDup = Api POST /api/v1/sensor-data @{ deviceId = 'VVTEST-DEV-1'; recordedAt = $apiR.Json.recordedAt.ToUniversalTime().ToString('o'); pm25 = 1; pm10 = 1 } $null @{ 'X-Device-Key' = $K1 }
+    Check 'API03' 'A duplicate reading is still rejected with 409 and creates neither a source nor a manipulated row' ($apiDup.Status -eq 409 -and (Sql $Db "SELECT COUNT(*) FROM dbo.ManipulatedSensorData WHERE SourceSensorDataID=$($apiR.Json.id)") -eq '1')
+    $apiNull = Api POST /api/v1/sensor-data @{ deviceId = 'VVTEST-DEV-1'; recordedAt = (Ts 3); aqi = 55 } $null @{ 'X-Device-Key' = $K1 }
+    Check 'API04' 'An API reading without PM values (the device only sent aqi 55) gets NULL aqi / aqi_status in the manipulated table' ($apiNull.Status -eq 201 -and (Sql $Db "SELECT CONCAT(ISNULL(CAST(aqi AS varchar(9)),'N'), ISNULL(aqi_status,'N')) FROM dbo.ManipulatedSensorData WHERE SourceSensorDataID=$($apiNull.Json.id)") -eq 'NN')
+
+    # ---- idempotency and failure behaviour (all inside transactions that are rolled back) ----
+    $someId = Sql $Db "SELECT TOP 1 SourceSensorDataID FROM dbo.ManipulatedSensorData WHERE device_id='VVTEST-AQI-1' ORDER BY SourceSensorDataID"
+    $idem = Sql $Db @"
+DECLARE @t dbo.SensorDataIdList; INSERT @t VALUES ($someId);
+DECLARE @before int = (SELECT COUNT(*) FROM dbo.ManipulatedSensorData), @p datetime2(3) = (SELECT processed_at FROM dbo.ManipulatedSensorData WHERE SourceSensorDataID=$someId);
+EXEC dbo.ProcessSensorData @t; EXEC dbo.ProcessSensorData @t;
+SELECT CONCAT(@before - (SELECT COUNT(*) FROM dbo.ManipulatedSensorData), '|', CASE WHEN @p = (SELECT processed_at FROM dbo.ManipulatedSensorData WHERE SourceSensorDataID=$someId) THEN 'unchanged' ELSE 'CHANGED' END, '|', (SELECT COUNT(*) FROM dbo.ManipulatedSensorData WHERE SourceSensorDataID=$someId))
+"@
+    Check 'ID01' 'Re-running the procedure for already processed readings (twice) adds no row and does not touch the existing one' ($idem -eq '0|unchanged|1') $idem
+    $hist1 = Sql $Db "SELECT TOP 1 ID FROM dbo.SensorData WHERE device_id NOT LIKE 'VVTEST-%' ORDER BY ID"
+    $fail = Sql $Db @"
+SET XACT_ABORT OFF; BEGIN TRAN;
+DECLARE @t dbo.SensorDataIdList; INSERT @t VALUES ($hist1), (9000000000099);
+DECLARE @e int = 0;
+BEGIN TRY EXEC dbo.ProcessSensorData @t; END TRY BEGIN CATCH SET @e = ERROR_NUMBER(); END CATCH;
+DECLARE @partial int = (SELECT COUNT(*) FROM dbo.ManipulatedSensorData WHERE SourceSensorDataID=$hist1);
+IF XACT_STATE() <> 0 ROLLBACK;
+SELECT CONCAT(@e, '|', @partial, '|', (SELECT COUNT(*) FROM dbo.ManipulatedSensorData WHERE SourceSensorDataID=$hist1))
+"@
+    Check 'FA01' 'Procedure with one valid and one unknown id fails loudly (error 51020) and writes NOTHING for the valid id either (all-or-nothing)' ($fail -eq '51020|0|0') $fail
+    $trgFail = Sql $Db @"
+SET XACT_ABORT OFF; BEGIN TRAN;
+ALTER TABLE dbo.ManipulatedSensorData WITH NOCHECK ADD CONSTRAINT CK_vvtest_inject CHECK (aqi < 0);
+DECLARE @err int = 0, @proc nvarchar(128) = N'';
+BEGIN TRY
+  INSERT dbo.SensorData (device_id,data_date,data_time,recorded_at,pm25,pm10) VALUES (N'VVTEST-AQI-1','2020-01-01','00:00:01','2020-01-01T00:00:01',10,10);
+END TRY
+BEGIN CATCH SET @err = ERROR_NUMBER(); SET @proc = ISNULL(ERROR_PROCEDURE(), N'?'); END CATCH;
+IF XACT_STATE() <> 0 ROLLBACK;
+SELECT CONCAT(@err, '|', @proc, '|src=', (SELECT COUNT(*) FROM dbo.SensorData WHERE device_id=N'VVTEST-AQI-1' AND recorded_at='2020-01-01T00:00:01'), '|man=', (SELECT COUNT(*) FROM dbo.ManipulatedSensorData WHERE device_id=N'VVTEST-AQI-1' AND recorded_at='2020-01-01T00:00:01'), '|injected=', (SELECT COUNT(*) FROM sys.check_constraints WHERE name='CK_vvtest_inject'))
+"@
+    Check 'FA02' 'When processing fails inside the trigger (a transient CHECK constraint makes the procedure INSERT fail; everything is rolled back afterwards) the SOURCE insert fails too: no SensorData row, no manipulated row, injected constraint gone' ($trgFail -eq '547|dbo.ProcessSensorData|src=0|man=0|injected=0') $trgFail
+    $histRun = Sql $Db @"
+BEGIN TRAN;
+DECLARE @t dbo.SensorDataIdList; INSERT @t SELECT ID FROM dbo.SensorData WHERE device_id NOT LIKE 'VVTEST-%';
+DECLARE @n int = (SELECT COUNT(*) FROM @t);
+EXEC dbo.ProcessSensorData @t;
+SELECT CONCAT(@n, '|', (SELECT COUNT(*) FROM dbo.ManipulatedSensorData m JOIN dbo.SensorData s ON s.ID=m.SourceSensorDataID WHERE s.device_id NOT LIKE 'VVTEST-%'), '|', (SELECT COUNT(*) FROM dbo.ManipulatedSensorData m JOIN dbo.SensorData s ON s.ID=m.SourceSensorDataID WHERE s.device_id NOT LIKE 'VVTEST-%' AND ISNULL(m.aqi,-99999) <> ISNULL(s.aqi,-99999)), '|', (SELECT COUNT(*) FROM dbo.ManipulatedSensorData m JOIN dbo.SensorData s ON s.ID=m.SourceSensorDataID WHERE s.device_id NOT LIKE 'VVTEST-%' AND ISNULL(m.aqi_status,N'') <> ISNULL(s.aqi_status,N'')));
+ROLLBACK;
+"@
+    $hf = $histRun -split '\|'
+    Check 'HI01' 'Dry run on the real historical readings (processed in a transaction that is ROLLED BACK - nothing is backfilled): calculated AQI vs what the ESP32 itself reported' ($hf.Count -eq 4 -and $hf[0] -eq $hf[1]) "readings=$($hf[0]) processed=$($hf[1]) aqi-different-from-device=$($hf[2]) status-different=$($hf[3])"
+    Write-Host "      (HI01 info) real-data comparison: $histRun"
+    $histAfter = Sql $Db "SELECT CONCAT(COUNT(*),'|',CHECKSUM_AGG(CHECKSUM(ID,device_id,recorded_at,aqi,aqi_status,pm25,pm10,humidity,temperature,outer_temperature,outer_humidity,co_ppm,created_at))) FROM dbo.SensorData WHERE device_id NOT LIKE 'VVTEST-%'"
+    Check 'HI02' 'Existing SensorData history is unchanged (row count + checksum before and after the whole run) and nothing was backfilled (no manipulated row for any non-test reading)' ($histAfter -eq $histBefore -and (Sql $Db "SELECT COUNT(*) FROM dbo.ManipulatedSensorData WHERE device_id NOT LIKE 'VVTEST-%'") -eq '0') "before=$histBefore after=$histAfter"
+    if ($uatMode) {
+        $rp = SqlApp "SELECT COUNT(*) FROM dbo.ManipulatedSensorData"
+        $rd = SqlApp "DELETE FROM dbo.ManipulatedSensorData WHERE 1 = 0"
+        Check 'PM01' 'Runtime login can read the manipulated table but cannot delete from it' ($rp -notlike 'ERR:*' -and $rd -match '^ERR:.*(denied|do not have permission)') "$rp / $rd"
+    }
+
     # ================= SCRIPTS PARITY =================
     $sdb = 'tempdb'   # scratch tables only; removed again in the finally block
     foreach ($f in 'CreateTables.sql', 'CreateIndexes.sql') { $o = sqlcmd -S $SqlServer @adminAuth -C -I -d $sdb -b -i (Join-Path $project "Database/$f") 2>&1; if ($LASTEXITCODE -ne 0) { throw "$f failed: $o" } }
-    $tl = "'Users','Devices','DeviceAssignments','SensorData','RefreshTokens'"
+    $tl = "'Users','Devices','DeviceAssignments','SensorData','ManipulatedSensorData','RefreshTokens'"
     $schemaQ = "SELECT STRING_AGG(CONCAT(TABLE_NAME,'.',COLUMN_NAME,':',DATA_TYPE,'(',ISNULL(CHARACTER_MAXIMUM_LENGTH,0),',',ISNULL(NUMERIC_PRECISION,0),',',ISNULL(NUMERIC_SCALE,0),',',ISNULL(DATETIME_PRECISION,0),')',IS_NULLABLE), ';') WITHIN GROUP (ORDER BY TABLE_NAME, COLUMN_NAME) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME IN ($tl)"
     $idxQ = "SELECT STRING_AGG(CONCAT(OBJECT_NAME(object_id),'.',name,':',is_unique,':',ISNULL(filter_definition,'')), ';') WITHIN GROUP (ORDER BY OBJECT_NAME(object_id), name) FROM sys.indexes WHERE name IS NOT NULL AND is_primary_key = 0 AND is_unique_constraint = 0 AND OBJECT_NAME(object_id) IN ($tl)"
     Check 'W08' 'Hand-written SQL scripts produce the same columns as the EF migration' ((Sql $Db $schemaQ) -eq (Sql $sdb $schemaQ -Admin))
     Check 'W09' 'Hand-written SQL scripts produce the same indexes as the EF migration' ((Sql $Db $idxQ) -eq (Sql $sdb $idxQ -Admin))
 
 }
+catch { Write-Host "ABORTED: $($_.Exception.Message) (script line $($_.InvocationInfo.ScriptLineNumber))" -ForegroundColor Red; throw }
 finally {
     if ($app -and -not $app.HasExited) { Stop-Process -Id $app.Id -Force }
     Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
@@ -1066,7 +1236,7 @@ finally {
     $errLog = Join-Path $runDir 'app.err.log'
     $leak = Select-String -Path $log, $errLog -Pattern 'StackTrace|   at VayuVata' -ErrorAction SilentlyContinue
     if ($results.Count -gt 0) { Check 'W10' 'No unhandled exceptions / stack traces in application log' (-not $leak) (($leak | Select-Object -First 2 | ForEach-Object { $_.Line }) -join ' | ') }
-    Sql tempdb "DROP TABLE IF EXISTS dbo.RefreshTokens, dbo.SensorData, dbo.DeviceAssignments, dbo.Users, dbo.Devices, dbo.__EFMigrationsHistory" -Admin | Out-Null
+    Sql tempdb "DROP TABLE IF EXISTS dbo.ManipulatedSensorData, dbo.RefreshTokens, dbo.SensorData, dbo.DeviceAssignments, dbo.Users, dbo.Devices, dbo.__EFMigrationsHistory" -Admin | Out-Null
     Remove-TestData $tokenBaseline $saLastLogin $saUpdated
     $left = Sql $Db "SELECT (SELECT COUNT(*) FROM Users WHERE Email LIKE '%@vvtest.local') + (SELECT COUNT(*) FROM Devices WHERE DeviceId LIKE 'VVTEST-%') + (SELECT COUNT(*) FROM SensorData WHERE device_id LIKE 'VVTEST-%')"
     $saCnt = Sql $Db "SELECT COUNT(*) FROM Users WHERE Role='SuperAdmin' AND IsActive=1"

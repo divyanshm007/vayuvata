@@ -256,3 +256,26 @@ batches by a background service; active, revoked-but-unexpired and recently expi
 (`Ingest:FutureToleranceMinutes`) because the device clock is IST. `DeviceAuth:AcceptStoredHashAsKey` (default **false**) additionally accepts the stored key hash as the key -
 this is what the live firmware currently sends; it weakens device authentication (anyone who can read the `Devices` table can post as that device) and should be turned off
 after the device is reflashed with its real `vv_` key.
+
+## Sensor-data processing in SQL Server (`dbo.ManipulatedSensorData`)
+
+```
+ESP32 -> API -> dbo.SensorData -> AFTER INSERT trigger -> dbo.ProcessSensorData -> dbo.ManipulatedSensorData
+```
+
+Every reading inserted into `dbo.SensorData` (API ingestion or direct SQL, one row or many) is processed by the database itself:
+
+| Object | Script | Purpose |
+|---|---|---|
+| `dbo.ManipulatedSensorData` | EF migration `SensorDataProcessing` (also in `Database/CreateTables.sql`) | the 18 source columns + `ManipulatedSensorDataID` (PK), `SourceSensorDataID` (FK, **unique** = one row per reading), `processed_at` (UTC, set by SQL Server). `ID` = the source ID (CHECK) |
+| `dbo.SensorDataIdList` | `Database/Objects/01_SensorDataIdList.sql` | table type (one or many ids) |
+| `dbo.ProcessSensorData` | `Database/Objects/02_ProcessSensorData.sql` | set-based, idempotent, never commits/rolls back, never swallows errors |
+| `dbo.TR_SensorData_AfterInsert` | `Database/Objects/03_TR_SensorData_AfterInsert.sql` | thin trigger: ids from `inserted` -> procedure; INSERT only, never touches `SensorData`; `XACT_ABORT ON`, so a processing failure rolls back the source insert too |
+
+* **AQI and status are calculated, never copied.** The device-reported `aqi` / `aqi_status` in `SensorData` are ignored; `ManipulatedSensorData.aqi` / `aqi_status` come from `pm25` and `pm10` using the firmware's `calculateAQI_INDIA()`: `(int)` truncation, Arduino `map()` integer arithmetic per interval, no clamping (above 500 it extrapolates exactly like the firmware), AQI = max(PM2.5 sub-index, PM10 sub-index), status Good/Satisfactory/Moderate/Poor/Very Poor/Severe at 50/100/200/300/400.
+* If `pm25` **or** `pm10` is NULL the AQI cannot be calculated: `aqi` and `aqi_status` stay **NULL** (nothing is invented). All other measurements keep their value and precision (NULL stays NULL, 0 stays 0). The firmware's PM calibration (0.77 / 1.10) and moving average are already applied before upload and are **not** applied again.
+* Only readings inserted **after** the migration are processed. Historical readings are **not** backfilled (a separate, explicitly approved operation). Backfill later = `EXEC dbo.ProcessSensorData` with the ids (idempotent).
+* The EF mapping declares the trigger (`HasTrigger`) so EF does not use an `OUTPUT` clause on inserts. **Deploy the API build that contains this before applying the migration.**
+* Apply: `VayuVata --migrate` (or `/opt/vayuvata-uat/bin/migrate.sh apply` on UAT). Re-running is a no-op; the procedure and trigger scripts are `CREATE OR ALTER`.
+* Rollback (dev/UAT only, migration login): `dotnet ef database update AuthHardening` runs the migration's Down, which drops the trigger, procedure, type and table.
+* Firmware note: `Tests/firmware/calculateAQI_INDIA.cpp` is a verbatim copy of the firmware function (the AQI test oracle). The firmware file in `Downloads` sends `rs485_temperature` / `rs485_humidity` in snake_case to the old Node endpoint; the .NET API stores the outer sensor as `outer_temperature` / `outer_humidity` (camelCase request names). No contract change was made here.

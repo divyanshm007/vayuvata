@@ -91,6 +91,36 @@ CREATE TABLE dbo.SensorData (
     CONSTRAINT FK_SensorData_Devices_device_id FOREIGN KEY (device_id) REFERENCES dbo.Devices (DeviceId)
 );
 
+-- Processed copy of every reading inserted after the SQL trigger was installed. Written ONLY by dbo.ProcessSensorData
+-- (called by TR_SensorData_AfterInsert); aqi / aqi_status are CALCULATED from pm25 / pm10, not copied. Procedure, table type
+-- and trigger: Database/Objects/*.sql (applied by EF migration SensorDataProcessing).
+CREATE TABLE dbo.ManipulatedSensorData (
+    ManipulatedSensorDataID bigint IDENTITY(1,1) NOT NULL,
+    SourceSensorDataID bigint        NOT NULL,
+    ID                 bigint        NOT NULL,
+    device_id          nvarchar(64)  NOT NULL,
+    data_date          date          NOT NULL,
+    data_time          time(3)       NOT NULL,
+    recorded_at        datetime2(3)  NOT NULL,
+    aqi                int           NULL,
+    aqi_status         nvarchar(32)  NULL,
+    pm10               decimal(8,2)  NULL,
+    pm25               decimal(8,2)  NULL,
+    no2_ppm            decimal(10,4) NULL,
+    so2_ppm            decimal(10,4) NULL,
+    co_ppm             decimal(10,4) NULL,
+    tvoc_ppb           decimal(10,2) NULL,
+    humidity           decimal(5,2)  NULL,
+    temperature        decimal(6,2)  NULL,
+    outer_temperature  decimal(6,2)  NULL,
+    outer_humidity     decimal(5,2)  NULL,
+    created_at         datetime2(3)  NOT NULL,
+    processed_at       datetime2(3)  NOT NULL CONSTRAINT DF_ManipulatedSensorData_processed_at DEFAULT SYSUTCDATETIME(),
+    CONSTRAINT PK_ManipulatedSensorData PRIMARY KEY (ManipulatedSensorDataID),
+    CONSTRAINT CK_ManipulatedSensorData_ID CHECK ([ID] = [SourceSensorDataID]),
+    CONSTRAINT FK_ManipulatedSensorData_SensorData_SourceSensorDataID FOREIGN KEY (SourceSensorDataID) REFERENCES dbo.SensorData (ID)
+);
+
 CREATE TABLE dbo.RefreshTokens (
     Id         int IDENTITY(1,1) NOT NULL,
     UserId     int NOT NULL,
