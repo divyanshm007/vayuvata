@@ -71,9 +71,9 @@ CREATE TABLE dbo.DeviceAssignments (
 CREATE TABLE dbo.SensorData (
     ID                 bigint IDENTITY(1,1) NOT NULL,
     device_id          nvarchar(64)  NOT NULL,
-    data_date          date          NOT NULL,     -- UTC date of recorded_at
-    data_time          time(3)       NOT NULL,     -- UTC time of recorded_at
-    recorded_at        datetime2(3)  NOT NULL,     -- UTC
+    data_date          date          NOT NULL,     -- as sent by the device (IST)
+    data_time          time(3)       NOT NULL,     -- as sent by the device (IST)
+    recorded_at        datetime2(3)  NOT NULL,     -- as sent by the device (IST)
     aqi                int           NULL,
     aqi_status         nvarchar(32)  NULL,
     pm10               decimal(8,2)  NULL,
@@ -86,7 +86,7 @@ CREATE TABLE dbo.SensorData (
     temperature        decimal(6,2)  NULL,
     outer_temperature  decimal(6,2)  NULL,
     outer_humidity     decimal(5,2)  NULL,
-    created_at         datetime2(3)  NOT NULL CONSTRAINT DF_SensorData_created_at DEFAULT SYSUTCDATETIME(),
+    created_at         datetime2(3)  NOT NULL CONSTRAINT DF_SensorData_created_at DEFAULT DATEADD(MINUTE, 330, SYSUTCDATETIME()),  -- IST
     CONSTRAINT PK_SensorData PRIMARY KEY (ID),
     CONSTRAINT FK_SensorData_Devices_device_id FOREIGN KEY (device_id) REFERENCES dbo.Devices (DeviceId)
 );

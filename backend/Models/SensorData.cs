@@ -2,7 +2,7 @@ namespace VayuVata.Models;
 
 /// <summary>
 /// Maps to dbo.SensorData. Column names are preserved exactly (see Data/Configurations).
-/// Timestamp contract: RecordedAt is UTC; DataDate/DataTime are its UTC date and time parts.
+/// Timestamp contract: RecordedAt, DataDate and DataTime are stored exactly as the device sends them (ESP32 sends IST wall-clock); CreatedAt is SQL Server UTC.
 /// Every measurement is nullable: a missing value is stored as NULL, never as 0.
 /// </summary>
 public class SensorData
