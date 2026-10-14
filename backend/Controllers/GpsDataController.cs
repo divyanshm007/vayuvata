@@ -8,13 +8,11 @@ using VayuVata.Services;
 
 namespace VayuVata.Controllers;
 
-/// <summary>GPS / cell position reports: push (device key) and get (JWT). Plain storage - no trigger, no processing.</summary>
+/// <summary>GPS / cell position reports: push (device key) and two open reads. Plain storage - no trigger, no processing.</summary>
 [ApiController]
 [Produces("application/json")]
 public class GpsDataController(GpsLocationService gps) : ControllerBase
 {
-    private CurrentUser Me => CurrentUser.From(User);
-
     /// <summary>
     /// Position upload (Raspberry Pi, once a minute). Authenticate with the per-device key in the <c>X-Device-Key</c> header (NOT a JWT). Same key rule as sensor data (the issued key, or the stored key hash when the server's compatibility switch is on).
     /// </summary>
@@ -42,10 +40,19 @@ public class GpsDataController(GpsLocationService gps) : ControllerBase
         return created ? StatusCode(StatusCodes.Status201Created, report) : Ok(report);
     }
 
-    /// <summary>Position reports the caller may see. Filter by <c>deviceId</c>, time window, fix and source; newest first (use <c>pageSize=1</c> for the latest position of a device).</summary>
-    [HttpGet("api/v1/gps-data"), Authorize(Policies.AnyRole)]
-    [ProducesResponseType<PagedResult<GpsLocationDto>>(200)]
-    [ProducesResponseType<ApiError>(401)]
-    public async Task<ActionResult<PagedResult<GpsLocationDto>>> List([FromQuery] GpsLocationQuery q, CancellationToken ct) =>
-        await gps.QueryAsync(q, Me, ct);
+    /// <summary>All GPS data in the table, newest first (no filters; the newest 5000 rows). No login needed.</summary>
+    [HttpGet("api/v1/gps-data"), AllowAnonymous]
+    [ProducesResponseType<List<GpsLocationDto>>(200)]
+    public async Task<ActionResult<List<GpsLocationDto>>> List(CancellationToken ct) => await gps.AllAsync(ct);
+
+    /// <summary>Current position of a device: enter the deviceId; it must exist and be active, then its latest GPS report is returned. No login needed.</summary>
+    /// <remarks>404 = unknown device, or no GPS data yet; 409 <c>device_inactive</c> = the device exists but is not active.</remarks>
+    /// <param name="deviceId">The device's id, e.g. Vayu_004.</param>
+    [HttpGet("api/v1/gps-data/current"), AllowAnonymous]
+    [ProducesResponseType<GpsLocationDto>(200)]
+    [ProducesResponseType<ApiError>(400)]
+    [ProducesResponseType<ApiError>(404)]
+    [ProducesResponseType<ApiError>(409)]
+    public async Task<ActionResult<GpsLocationDto>> Current([FromQuery] string deviceId, CancellationToken ct) =>
+        await gps.CurrentAsync(deviceId, ct);
 }

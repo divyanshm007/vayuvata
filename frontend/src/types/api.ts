@@ -1,0 +1,61 @@
+// Contracts mirroring the VayuVata backend DTOs (backend/DTOs/*). Do not add fields the API does not return.
+export type Role = 'SuperAdmin' | 'Admin' | 'User';
+
+export interface LoginResponse {
+  accessToken: string; expiresAt: string; refreshToken: string; refreshTokenExpiresAt: string;
+  userId: number; name: string; email: string; role: Role;
+}
+export interface Profile {
+  id: number; name: string; email: string; role: Role; managerId: number | null; isActive: boolean; lastLoginAt: string | null;
+}
+
+export interface PagedResult<T> {
+  items: T[]; page: number; pageSize: number; totalCount: number | null; totalPages: number | null; hasNextPage: boolean;
+}
+export interface PageParams { page?: number; pageSize?: number; includeTotal?: boolean }
+
+export interface ApiErrorBody {
+  status: number; code: string; message: string; errors?: Record<string, string[]> | null; traceId?: string | null;
+}
+
+export interface UserDto {
+  id: number; name: string; email: string; role: Role;
+  managerId: number | null; managerName: string | null; managerRole: 'Admin' | 'SuperAdmin' | null;
+  assignmentType: 'Standalone' | 'AdminManaged' | null;
+  isActive: boolean; createdAt: string; updatedAt: string | null; lastLoginAt: string | null;
+}
+export interface UserQuery extends PageParams { search?: string; role?: string; managerId?: number; standalone?: boolean; isActive?: boolean }
+export interface CreateUserRequest { name: string; email: string; password: string; role: 'Admin' | 'User'; managerId?: number | null }
+export interface CreateManagedUserRequest { name: string; email: string; password: string }
+export interface UpdateUserRequest { name: string; email: string }
+export interface AdminUsersPage extends PagedResult<UserDto> { adminId: number; adminName: string }
+
+export interface DeviceDto {
+  id: number; deviceId: string; deviceName: string; description: string | null; isActive: boolean;
+  createdAt: string; updatedAt: string | null;
+  assignedUserId: number | null; assignedUserName: string | null; assignedAt: string | null;
+}
+export interface DeviceWithKeyDto extends DeviceDto { apiKey: string }
+export interface DeviceQuery extends PageParams { search?: string; isActive?: boolean; assigned?: boolean }
+export interface CreateDeviceRequest { deviceId: string; deviceName: string; description?: string | null }
+export interface UpdateDeviceRequest { deviceName: string; description?: string | null }
+export interface AssignmentDto {
+  id: number; deviceRecordId: number; deviceId: string; userId: number; userName: string;
+  assignedByUserId: number; assignedByName: string; assignedAt: string; unassignedAt: string | null; isActive: boolean; notes: string | null;
+}
+
+export interface SensorDataDto {
+  id: number; deviceId: string; dataDate: string; dataTime: string; recordedAt: string;
+  aqi: number | null; aqiStatus: string | null;
+  pm10: number | null; pm25: number | null; no2Ppm: number | null; so2Ppm: number | null; coPpm: number | null; tvocPpb: number | null;
+  humidity: number | null; temperature: number | null; outerTemperature: number | null; outerHumidity: number | null;
+  createdAt: string;
+}
+export interface SensorDataQuery extends PageParams {
+  deviceId?: string; from?: string; to?: string; sortBy?: 'recordedAt' | 'createdAt' | 'aqi'; sortDir?: 'asc' | 'desc';
+}
+export interface HistoryQuery extends PageParams { from?: string; to?: string; sortDir?: 'asc' | 'desc' }
+
+export interface HealthResponse { status: string; database: string; timeUtc: string }
+
+export interface DeviceKeyHashDto { id: number; deviceId: string; apiKeyHash: string | null }

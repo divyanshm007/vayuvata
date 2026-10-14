@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using VayuVata.Helpers;
 
 namespace VayuVata.DTOs.SensorData;
@@ -43,6 +44,13 @@ public class CreateSensorDataRequest
     public decimal? OuterTemperature { get; set; }
     /// <example>48.0</example>
     public decimal? OuterHumidity { get; set; }
+
+    /// <summary>Legacy firmware name for <c>outerTemperature</c> (RS485 outer sensor). Used only when <c>outerTemperature</c> is not sent.</summary>
+    [JsonPropertyName("rs485_temperature")]
+    public decimal? Rs485Temperature { get => null; set => OuterTemperature ??= value; }
+    /// <summary>Legacy firmware name for <c>outerHumidity</c> (RS485 outer sensor). Used only when <c>outerHumidity</c> is not sent.</summary>
+    [JsonPropertyName("rs485_humidity")]
+    public decimal? Rs485Humidity { get => null; set => OuterHumidity ??= value; }
 }
 
 public class SensorDataDto

@@ -96,6 +96,16 @@ public class DeviceService(
         return await GetAsync(id, caller, ct);
     }
 
+    /// <summary>Stored key hash for flashing a device. SuperAdmin only (enforced by the controller policy); every view is logged.</summary>
+    public async Task<DeviceKeyHashDto> GetKeyHashAsync(int id, CurrentUser caller, CancellationToken ct)
+    {
+        var d = await db.Devices.AsNoTracking().Where(x => x.Id == id)
+            .Select(x => new DeviceKeyHashDto { Id = x.Id, DeviceId = x.DeviceId, ApiKeyHash = x.ApiKeyHash })
+            .FirstOrDefaultAsync(ct) ?? throw ApiException.NotFound("Device not found.");
+        log.LogInformation("Device {Id} key hash viewed by {CallerId}", id, caller.Id);
+        return d;
+    }
+
     /// <summary>Issues a new API key and invalidates the previous one immediately.</summary>
     public async Task<DeviceWithKeyDto> RotateKeyAsync(int id, CurrentUser caller, CancellationToken ct)
     {

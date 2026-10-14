@@ -67,6 +67,14 @@ public class DeviceWithKeyDto : DeviceDto
     public string ApiKey { get; set; } = "";
 }
 
+/// <summary>SuperAdmin only. The stored key hash; a device presents it as X-Device-Key when DeviceAuth:AcceptStoredHashAsKey is on.</summary>
+public class DeviceKeyHashDto
+{
+    public int Id { get; set; }
+    public string DeviceId { get; set; } = "";
+    public string? ApiKeyHash { get; set; }
+}
+
 public class AssignmentDto
 {
     public int Id { get; set; }

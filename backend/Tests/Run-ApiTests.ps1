@@ -517,7 +517,7 @@ try {
 
     # --- OpenAPI accuracy ---
     $opCount = 0; foreach ($pp in $sw.Json.paths.PSObject.Properties) { $opCount += @($pp.Value.PSObject.Properties).Count }
-    Check 'W04b' 'OpenAPI documents exactly the 33 implemented operations (the 30 original + change-password + 2 GPS), or 34 when the separately developed GET /devices/{id}/key-hash is also present' ($opCount -eq $(if ($sw.Json.paths.PSObject.Properties.Name -contains '/api/v1/devices/{id}/key-hash') { 34 } else { 33 })) "operations=$opCount"
+    Check 'W04b' 'OpenAPI documents exactly the 34 implemented operations (the 30 original + change-password + 3 GPS), or +1 when the separately developed GET /devices/{id}/key-hash is also present' ($opCount -eq $(if ($sw.Json.paths.PSObject.Properties.Name -contains '/api/v1/devices/{id}/key-hash') { 35 } else { 34 })) "operations=$opCount"
     $ing = $sw.Json.paths.'/api/v1/sensor-data'.post
     Check 'W11a' 'Ingestion is documented with the X-Device-Key scheme, not Bearer' (($ing.security | ConvertTo-Json -Compress -Depth 6) -match 'DeviceKey' -and ($ing.security | ConvertTo-Json -Compress -Depth 6) -notmatch 'Bearer' -and $sw.Json.components.securitySchemes.DeviceKey.name -eq 'X-Device-Key' -and $sw.Json.components.securitySchemes.DeviceKey.in -eq 'header')
     Check 'W11b' 'Protected operations require Bearer; login/refresh/health do not' (($sw.Json.paths.'/api/v1/auth/me'.get.security | ConvertTo-Json -Compress -Depth 6) -match 'Bearer' -and ($sw.Json.paths.'/api/v1/users'.get.security | ConvertTo-Json -Compress -Depth 6) -match 'Bearer' -and -not $sw.Json.paths.'/api/v1/auth/login'.post.security -and -not $sw.Json.paths.'/api/v1/health'.get.security -and -not $sw.Json.paths.'/api/v1/auth/refresh'.post.security)
@@ -998,8 +998,8 @@ try {
     Check 'O04' 'Compatibility with the Stage A contract: all 30 original operations, their documented status codes, security schemes and every schema property still exist (additive changes only)' ($contractLoss.Count -eq 0) ($contractLoss -join '; ')
     $newOps = @($ops | Where-Object { -not $base0.paths.($_.Path) -or -not $base0.paths.($_.Path).($_.Method.ToLower()) } | ForEach-Object { "$($_.Method) $($_.Path)" })
     $hasKh = [bool]$swb.Json.paths.'/api/v1/devices/{id}/key-hash'
-    $expectNew = (@('GET /api/v1/gps-data', 'POST /api/v1/auth/change-password', 'POST /api/v1/gps-data') + $(if ($hasKh) { 'GET /api/v1/devices/{id}/key-hash' })) | Sort-Object | ForEach-Object { $_ } | Join-String -Separator ','
-    Check 'O05' 'Only the expected routes were added since Stage A: change-password, POST + GET /gps-data (and GET /devices/{id}/key-hash when that separate change is present); nothing else' ((($newOps | Sort-Object) -join ',') -eq $expectNew -and @($ops).Count -eq $(if ($hasKh) { 34 } else { 33 }) -and @($swb.Json.paths.PSObject.Properties).Count -eq $(if ($hasKh) { 27 } else { 26 })) (($newOps | Sort-Object) -join ',')
+    $expectNew = (@('GET /api/v1/gps-data', 'GET /api/v1/gps-data/current', 'POST /api/v1/auth/change-password', 'POST /api/v1/gps-data') + $(if ($hasKh) { 'GET /api/v1/devices/{id}/key-hash' })) | Sort-Object | ForEach-Object { $_ } | Join-String -Separator ','
+    Check 'O05' 'Only the expected routes were added since Stage A: change-password, POST + GET /gps-data, GET /gps-data/current (and GET /devices/{id}/key-hash when that separate change is present); nothing else' ((($newOps | Sort-Object) -join ',') -eq $expectNew -and @($ops).Count -eq $(if ($hasKh) { 35 } else { 34 }) -and @($swb.Json.paths.PSObject.Properties).Count -eq $(if ($hasKh) { 28 } else { 27 })) (($newOps | Sort-Object) -join ',')
     $cpOp = $swb.Json.paths.'/api/v1/auth/change-password'.post
     Check 'O06' 'change-password is documented: Bearer security, request body, 200 LoginResponse, 400/401/429' (($cpOp.security | ConvertTo-Json -Compress -Depth 5) -match 'Bearer' -and $cpOp.requestBody -and $cpOp.responses.'200' -and $cpOp.responses.'400' -and $cpOp.responses.'401' -and $cpOp.responses.'429')
 
@@ -1310,29 +1310,26 @@ ROLLBACK;
     $pubPut = Req PUT /api/v1/gps-data -root "http://localhost:$pubPort" -headers @{ 'X-Device-Key' = $GK1 }
     Check 'GP09' 'Public listener: POST /api/v1/gps-data works (201); GET gps-data, login and other verbs on it remain an empty 404' ($pubG.Status -eq 201 -and $pubGet.StatusCode -eq 404 -and [string]$pubGet.Content -eq '' -and $pubLogin.StatusCode -eq 404 -and $pubPut.StatusCode -eq 404)
 
-    # reads and scoping
-    $null = Send-Gps 'VVTEST-GPS-2' $GK2 @{ recordedAt = (Ts 10); lat = 19.07; lon = 72.87 }
-    $nowIds = { param($tok, $q) @((Api GET "/api/v1/gps-data?pageSize=100$q" $null $tok).Json.items | ForEach-Object { $_.deviceId } | Sort-Object -Unique) -join ',' }
-    Check 'GP10' 'Visibility follows sensor-data rules: SuperAdmin sees all GPS devices; Admin A1 only their User''s device; User U1 only own; U3 only own; an unrelated standalone User and anonymous see none / 401' ((& $nowIds $SA '&deviceId=VVTEST-GPS-1') -eq 'VVTEST-GPS-1' -and ((& $nowIds $SA '') -match 'VVTEST-GPS-1,VVTEST-GPS-2') -and (& $nowIds $A1 '') -eq 'VVTEST-GPS-1' -and (& $nowIds $U1 '') -eq 'VVTEST-GPS-1' -and (& $nowIds $U3 '') -eq 'VVTEST-GPS-2' -and (& $nowIds $S1 '') -eq '' -and (Api GET /api/v1/gps-data).Status -eq 401) "A1=$(& $nowIds $A1 '') U3=$(& $nowIds $U3 '')"
-    Check 'GP10b' 'Query-string tampering cannot widen scope (deviceId of another Admin''s device returns nothing)' ((& $nowIds $A1 '&deviceId=VVTEST-GPS-2') -eq '' -and (& $nowIds $U1 '&deviceId=VVTEST-GPS-2') -eq '')
-    $fl = Api GET '/api/v1/gps-data?deviceId=VVTEST-GPS-1&fix=false&pageSize=100' $null $SA
-    $sc = Api GET '/api/v1/gps-data?deviceId=VVTEST-GPS-1&source=cell&pageSize=100' $null $SA
-    $asc = Api GET '/api/v1/gps-data?deviceId=VVTEST-GPS-1&sortDir=asc&pageSize=100' $null $SA
-    $desc = Api GET '/api/v1/gps-data?deviceId=VVTEST-GPS-1&pageSize=100' $null $SA
-    $rng = Api GET ('/api/v1/gps-data?deviceId=VVTEST-GPS-1&pageSize=100&from=' + [uri]::EscapeDataString((Get-Date).ToUniversalTime().AddMinutes(-9.5).ToString('o')) + '&to=' + [uri]::EscapeDataString((Get-Date).ToUniversalTime().AddMinutes(-6.5).ToString('o'))) $null $SA
-    Check 'GP11' 'Filters and sorting: fix=false -> only no-fix; source=cell -> only cell; asc/desc ordering by recordedAt; from/to window; includeTotal=false works' (@($fl.Json.items | Where-Object { $_.fix }).Count -eq 0 -and $fl.Json.items.Count -ge 1 -and @($sc.Json.items | Where-Object { $_.source -ne 'cell' }).Count -eq 0 -and $sc.Json.items.Count -ge 1 -and $asc.Json.items[0].recordedAt -lt $asc.Json.items[-1].recordedAt -and $desc.Json.items[0].recordedAt -gt $desc.Json.items[-1].recordedAt -and $rng.Json.totalCount -ge 2 -and $null -eq (Api GET '/api/v1/gps-data?pageSize=2&includeTotal=false' $null $SA).Json.totalCount)
-    Check 'GP11b' 'Invalid source filter -> 400; invalid fix filter -> 400' ((Api GET '/api/v1/gps-data?source=wifi' $null $SA).Status -eq 400 -and (Api GET '/api/v1/gps-data?fix=maybe' $null $SA).Status -eq 400)
-    $null = Send-Gps 'VVTEST-GPS-1' $GK1 @{ recordedAt = (Ts 2); fix = $false; lat = $null; lon = $null; altM = $null; speedKmh = $null }
-    $lat1 = Api GET '/api/v1/gps-data?deviceId=VVTEST-GPS-1&fix=true&pageSize=1' $null $U1
-    $lat2 = Api GET '/api/v1/gps-data?deviceId=VVTEST-GPS-1&pageSize=1' $null $SA
-    Check 'GP12' 'Latest position = GET with pageSize=1 (newest first): fix=true returns the newest real fix, without the filter the newest report (the no-fix one); another Admin''s User gets nothing; anonymous 401' ($lat1.Status -eq 200 -and $lat1.Json.items.Count -eq 1 -and $lat1.Json.items[0].fix -eq $true -and $lat2.Json.items[0].fix -eq $false -and $lat2.Json.items[0].recordedAt -gt $lat1.Json.items[0].recordedAt -and (Api GET '/api/v1/gps-data?deviceId=VVTEST-GPS-1&pageSize=1' $null $U3).Json.items.Count -eq 0 -and (Api GET '/api/v1/gps-data?pageSize=1').Status -eq 401) "$($lat1.Status)"
-    Check 'GP13' 'Every report carries its deviceId (response and table) and the response has no internal fields beyond the payload + id/receivedAt' ((@($lat1.Json.items[0].PSObject.Properties.Name | Sort-Object) -join ',') -eq 'altM,deviceId,fix,id,lat,lon,receivedAt,recordedAt,signalPct,source,speedKmh' -and $lat1.Json.items[0].deviceId -eq 'VVTEST-GPS-1')
+    # reads: two open GETs, no token, no filters
+    $null = Send-Gps -dev 'VVTEST-GPS-2' -key $GK2 -b @{ recordedAt = (Ts 10); lat = 19.07; lon = 72.87 }
+    $null = Send-Gps -dev 'VVTEST-GPS-1' -key $GK1 -b @{ recordedAt = (Ts 2); fix = $false; lat = $null; lon = $null; altM = $null; speedKmh = $null }
+    $gdE = New-Device $SA 'VVTEST-GPS-EMPTY'
+    $all = Req GET /api/v1/gps-data
+    $allJ = Body $all
+    $allDevs = @($allJ | ForEach-Object { $_.deviceId } | Sort-Object -Unique)
+    Check 'GP10' 'GET /api/v1/gps-data needs NO token and NO parameters: returns every row of the table as a plain list (all devices), newest first, each row with its deviceId' ($all.StatusCode -eq 200 -and $allJ.Count -ge 5 -and ($allDevs -contains 'VVTEST-GPS-1') -and ($allDevs -contains 'VVTEST-GPS-2') -and $allJ[0].recordedAt -ge $allJ[-1].recordedAt -and $allJ[0].deviceId -and [int](Sql $Db "SELECT COUNT(*) FROM dbo.GpsLocationData") -eq $allJ.Count) "status=$($all.StatusCode) rows=$($allJ.Count)"
+    Check 'GP11' 'The list ignores query strings (no filtering / validation): ?deviceId=x&foo=bar returns the same rows' ((Body (Req GET '/api/v1/gps-data?deviceId=VVTEST-GPS-2&foo=bar')).Count -eq $allJ.Count)
+    $cu1 = Req GET '/api/v1/gps-data/current?deviceId=VVTEST-GPS-1'
+    $cu1j = Body $cu1
+    $newest1 = @($allJ | Where-Object { $_.deviceId -eq 'VVTEST-GPS-1' })[0]
+    Check 'GP12' 'GET /current?deviceId= (no token): active device -> 200 with its NEWEST report (IST +05:30), same as the first row of that device in the list' ($cu1.StatusCode -eq 200 -and $cu1j.deviceId -eq 'VVTEST-GPS-1' -and $cu1j.id -eq $newest1.id -and [string]$cu1.Content -match '\+05:30') "$($cu1.StatusCode)"
+    $cu3 = Req GET '/api/v1/gps-data/current?deviceId=VVTEST-GPS-OFF'
+    Check 'GP13' 'current: a device that exists but is NOT active -> 409 device_inactive, no data' ($cu3.StatusCode -eq 409 -and (Body $cu3).code -eq 'device_inactive' -and $null -eq (Body $cu3).lat)
+    Check 'GP13b' 'current: unknown device 404; active device without any GPS data yet 404; missing deviceId 400' ((Req GET '/api/v1/gps-data/current?deviceId=NO-SUCH-DEVICE').StatusCode -eq 404 -and (Req GET '/api/v1/gps-data/current?deviceId=VVTEST-GPS-EMPTY').StatusCode -eq 404 -and (Req GET '/api/v1/gps-data/current').StatusCode -eq 400)
 
     $ist = Send-Gps -dev 'VVTEST-GPS-3' -key $rk -b @{ recordedAt = '2026-10-13T01:30:00Z' }
     $istRow = Sql $Db "SELECT CONCAT(CONVERT(varchar(23), recorded_at, 121), '|', CASE WHEN received_at BETWEEN DATEADD(MINUTE, 325, SYSUTCDATETIME()) AND DATEADD(MINUTE, 336, SYSUTCDATETIME()) THEN 'received-ist' ELSE 'received-OFF' END) FROM dbo.GpsLocationData WHERE ID=$($ist.Json.id)"
     Check 'GP18' 'IST storage: the Pi sends UTC 2026-10-13T01:30:00Z; the database holds 2026-10-13 07:00:00.000 (IST wall-clock), received_at is IST too, and the API returns 2026-10-13T07:00:00+05:30' ($ist.Status -eq 201 -and $istRow -eq '2026-10-13 07:00:00.000|received-ist' -and $ist.Raw -match '"recordedAt":"2026-10-13T07:00:00\+05:30"') "$($ist.Status) $istRow $($ist.Raw)"
-    $istFilter = Api GET '/api/v1/gps-data?deviceId=VVTEST-GPS-3&from=2026-10-13T07:00:00%2B05:30&to=2026-10-13T01:30:00Z&pageSize=5' $null $SA
-    Check 'GP18b' 'from/to windows are applied in IST: 07:00+05:30 and 01:30Z (the same instant) find the report' ($istFilter.Status -eq 200 -and $istFilter.Json.totalCount -eq 1) $istFilter.Raw
     # database level
     $gcols = Sql $Db "SELECT STRING_AGG(name, ',') WITHIN GROUP (ORDER BY column_id) FROM sys.columns WHERE object_id=OBJECT_ID('dbo.GpsLocationData')"
     Check 'GP14' 'Table dbo.GpsLocationData has the designed columns' ($gcols -eq 'ID,device_id,recorded_at,received_at,has_fix,source,latitude,longitude,altitude_m,speed_kmh,signal_pct') $gcols
@@ -1341,7 +1338,7 @@ ROLLBACK;
     Check 'GP16b' 'GPS storage is plain: NO trigger on dbo.GpsLocationData (the only table trigger on SensorData/Users/Devices side is untouched)' ((Sql $Db "SELECT COUNT(*) FROM sys.triggers WHERE parent_id=OBJECT_ID('dbo.GpsLocationData')") -eq '0')
     Check 'GP16' 'GPS API does not touch sensor data: no SensorData / ManipulatedSensorData rows for the GPS devices' ((Sql $Db "SELECT COUNT(*) FROM dbo.SensorData WHERE device_id LIKE 'VVTEST-GPS-%'") -eq '0' -and (Sql $Db "SELECT COUNT(*) FROM dbo.ManipulatedSensorData WHERE device_id LIKE 'VVTEST-GPS-%'") -eq '0')
     $swg = Api GET /swagger/v1/swagger.json
-    $gp = $swg.Json.paths.'/api/v1/gps-data';     Check 'GP17' 'OpenAPI: POST /gps-data uses the DeviceKey scheme (not Bearer) with 200/201/400/401/403/413/429/500; GET uses Bearer; request schema documents every field' (($gp.post.security | ConvertTo-Json -Compress -Depth 6) -match 'DeviceKey' -and ($gp.post.security | ConvertTo-Json -Compress -Depth 6) -notmatch 'Bearer' -and $gp.post.responses.'200' -and $gp.post.responses.'201' -and $gp.post.responses.'403' -and $gp.post.responses.'413' -and $gp.post.responses.'429' -and ($gp.get.security | ConvertTo-Json -Compress -Depth 6) -match 'Bearer' -and @($swg.Json.components.schemas.CreateGpsLocationRequest.properties.PSObject.Properties.Name).Count -eq 9)
+    $gp = $swg.Json.paths.'/api/v1/gps-data';     Check 'GP17' 'OpenAPI: POST /gps-data uses the DeviceKey scheme (not Bearer) with 200/201/400/401/403/413/429/500; both GETs are open (no security), the list has no parameters and /current only deviceId; request schema documents every field' (($gp.post.security | ConvertTo-Json -Compress -Depth 6) -match 'DeviceKey' -and ($gp.post.security | ConvertTo-Json -Compress -Depth 6) -notmatch 'Bearer' -and $gp.post.responses.'200' -and $gp.post.responses.'201' -and $gp.post.responses.'403' -and $gp.post.responses.'413' -and $gp.post.responses.'429' -and -not $gp.get.security -and -not $swg.Json.paths.'/api/v1/gps-data/current'.get.security -and @($swg.Json.paths.'/api/v1/gps-data'.get.parameters).Count -eq 0 -and @($swg.Json.paths.'/api/v1/gps-data/current'.get.parameters).Count -eq 1 -and @($swg.Json.components.schemas.CreateGpsLocationRequest.properties.PSObject.Properties.Name).Count -eq 9)
 
     # ================= SCRIPTS PARITY =================
     $sdb = 'tempdb'   # scratch tables only; removed again in the finally block

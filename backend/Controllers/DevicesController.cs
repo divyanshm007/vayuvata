@@ -58,6 +58,12 @@ public class DevicesController(DeviceService devices, DeviceAssignmentService as
     public async Task<ActionResult<DeviceWithKeyDto>> RotateKey(int id, CancellationToken ct) =>
         await devices.RotateKeyAsync(id, Me, ct);
 
+    /// <summary>The device's stored key hash (SuperAdmin). Flash the DeviceId and this value into the ESP32; it sends the hash as X-Device-Key.</summary>
+    [HttpGet("{id:int}/key-hash"), Authorize(Policies.SuperAdminOnly)]
+    [ProducesResponseType<DeviceKeyHashDto>(200)]
+    [ProducesResponseType<ApiError>(404)]
+    public async Task<ActionResult<DeviceKeyHashDto>> KeyHash(int id, CancellationToken ct) => await devices.GetKeyHashAsync(id, Me, ct);
+
     /// <summary>Assign or reassign a device to a User. History is preserved.</summary>
     [HttpPost("{id:int}/assign"), Authorize(Policies.AdminOrAbove)]
     [ProducesResponseType<DeviceDto>(200)]

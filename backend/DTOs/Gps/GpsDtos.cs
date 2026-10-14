@@ -53,19 +53,3 @@ public class GpsLocationDto
     public decimal? SpeedKmh { get; set; }
     public int? SignalPct { get; set; }
 }
-
-public class GpsLocationQuery : PageQuery
-{
-    /// <summary>Physical device identifier filter.</summary>
-    public string? DeviceId { get; set; }
-    /// <summary>Window start (ISO-8601 with Z/offset; a value without zone is read as IST).</summary>
-    public DateTime? From { get; set; }
-    /// <summary>Window end (same rules as from).</summary>
-    public DateTime? To { get; set; }
-    /// <summary>true = only reports with a position, false = only no-fix reports.</summary>
-    public bool? Fix { get; set; }
-    /// <summary>gps | cell</summary>
-    public string? Source { get; set; }
-    /// <summary>desc (default, newest first) | asc</summary>
-    public string SortDir { get; set; } = "desc";
-}

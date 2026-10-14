@@ -97,24 +97,28 @@ public class GpsLocationService(VayuVataDbContext db, IValidator<CreateGpsLocati
             && CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(provided.Trim().ToLowerInvariant()), stored);
     }
 
-    public async Task<PagedResult<GpsLocationDto>> QueryAsync(GpsLocationQuery q, CurrentUser caller, CancellationToken ct)
+    /// <summary>Every stored GPS report, newest first. No filters. Capped at the newest <see cref="MaxRows"/> rows so the response stays bounded.</summary>
+    public const int MaxRows = 5000;
+
+    public async Task<List<GpsLocationDto>> AllAsync(CancellationToken ct)
     {
-        var query = db.VisibleGpsLocations(caller).AsNoTracking();
-        if (!string.IsNullOrWhiteSpace(q.DeviceId)) query = query.Where(g => g.DeviceCode == q.DeviceId);
-        if (q.Fix is { } fix) query = query.Where(g => g.HasFix == fix);
-        if (!string.IsNullOrWhiteSpace(q.Source))
-        {
-            if (q.Source is not ("gps" or "cell")) throw ApiException.BadRequest("source must be 'gps' or 'cell'.");
-            query = query.Where(g => g.Source == q.Source);
-        }
-        if (q.From is { } f) { var fi = ToIstWallClock(f); query = query.Where(g => g.RecordedAt >= fi); }
-        if (q.To is { } t) { var ti = ToIstWallClock(t); query = query.Where(g => g.RecordedAt <= ti); }
-        var desc = !string.Equals(q.SortDir, "asc", StringComparison.OrdinalIgnoreCase);
-        query = desc ? query.OrderByDescending(g => g.RecordedAt).ThenByDescending(g => g.Id) : query.OrderBy(g => g.RecordedAt).ThenBy(g => g.Id);
-        var page = await Project(query).ToPagedAsync(q, ct);
-        return new PagedResult<GpsLocationDto>
-        {
-            Items = page.Items.Select(Map).ToList(), Page = page.Page, PageSize = page.PageSize, TotalCount = page.TotalCount, HasNextPage = page.HasNextPage,
-        };
+        var rows = await Project(db.GpsLocationData.AsNoTracking().OrderByDescending(g => g.RecordedAt).ThenByDescending(g => g.Id).Take(MaxRows)).ToListAsync(ct);
+        return rows.Select(Map).ToList();
+    }
+
+    /// <summary>
+    /// Current position of one device, by physical deviceId: (1) the device must exist (404), (2) it must be ACTIVE (409 device_inactive),
+    /// (3) its newest GPS report is returned (404 when it has none yet).
+    /// </summary>
+    public async Task<GpsLocationDto> CurrentAsync(string deviceId, CancellationToken ct)
+    {
+        var code = deviceId.Trim();
+        var device = await db.Devices.AsNoTracking().Where(d => d.DeviceId == code).Select(d => new { d.DeviceId, d.IsActive }).FirstOrDefaultAsync(ct)
+                     ?? throw ApiException.NotFound("Device not found.");
+        if (!device.IsActive) throw ApiException.Conflict("Device is inactive.", "device_inactive");
+        var row = await Project(db.GpsLocationData.AsNoTracking().Where(g => g.DeviceCode == device.DeviceId)
+                      .OrderByDescending(g => g.RecordedAt).ThenByDescending(g => g.Id)).FirstOrDefaultAsync(ct)
+                  ?? throw ApiException.NotFound("No GPS data for this device yet.");
+        return Map(row);
     }
 }
