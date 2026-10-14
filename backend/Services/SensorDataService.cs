@@ -15,7 +15,7 @@ public class SensorDataService(
     IConfiguration config, IWebHostEnvironment env, Microsoft.Extensions.Options.IOptions<IngestOptions> ingest,
     Microsoft.Extensions.Options.IOptions<DeviceAuthOptions> deviceAuth, ILogger<SensorDataService> log)
 {
-    private static IQueryable<SensorDataDto> Project(IQueryable<SensorData> q) => q.Select(s => new SensorDataDto
+    private static IQueryable<SensorDataDto> Project(IQueryable<ManipulatedSensorData> q) => q.Select(s => new SensorDataDto
     {
         Id = s.Id, DeviceId = s.DeviceCode, DataDate = s.DataDate, DataTime = s.DataTime, RecordedAt = s.RecordedAt,
         Aqi = s.Aqi, AqiStatus = s.AqiStatus, Pm10 = s.Pm10, Pm25 = s.Pm25, No2Ppm = s.No2Ppm, So2Ppm = s.So2Ppm,
@@ -65,7 +65,9 @@ public class SensorDataService(
         {
             throw ApiException.Conflict("A reading for this device at this recordedAt already exists.", "duplicate_reading");
         }
-        return await Project(db.SensorData.AsNoTracking().Where(s => s.Id == row.Id)).FirstAsync(ct);
+        // The AFTER INSERT trigger has already written the processed row in the same transaction; the response shows that
+        // row (calculated AQI), never the raw dbo.SensorData row.
+        return await Project(db.ManipulatedSensorData.AsNoTracking().Where(s => s.Id == row.Id)).FirstAsync(ct);
     }
 
     private bool KeyMatches(Device device, string? provided, bool devModeAllowsMissingKey)
@@ -102,7 +104,7 @@ public class SensorDataService(
     public async Task<SensorDataDto> LatestAsync(int deviceRecordId, CurrentUser caller, CancellationToken ct)
     {
         var code = await AuthorizedDeviceCodeAsync(deviceRecordId, caller, ct);
-        return await Project(db.SensorData.AsNoTracking().Where(s => s.DeviceCode == code)
+        return await Project(db.ManipulatedSensorData.AsNoTracking().Where(s => s.DeviceCode == code)
                    .OrderByDescending(s => s.RecordedAt).ThenByDescending(s => s.Id)).FirstOrDefaultAsync(ct)
                ?? throw ApiException.NotFound("No readings for this device yet.");
     }
@@ -110,7 +112,7 @@ public class SensorDataService(
     public async Task<PagedResult<SensorDataDto>> HistoryAsync(int deviceRecordId, HistoryQuery q, CurrentUser caller, CancellationToken ct)
     {
         var code = await AuthorizedDeviceCodeAsync(deviceRecordId, caller, ct);
-        var query = ApplyRange(db.SensorData.AsNoTracking().Where(s => s.DeviceCode == code), q.From, q.To);
+        var query = ApplyRange(db.ManipulatedSensorData.AsNoTracking().Where(s => s.DeviceCode == code), q.From, q.To);
         var desc = !string.Equals(q.SortDir, "asc", StringComparison.OrdinalIgnoreCase);
         query = desc ? query.OrderByDescending(s => s.RecordedAt).ThenByDescending(s => s.Id)
                      : query.OrderBy(s => s.RecordedAt).ThenBy(s => s.Id);
@@ -121,7 +123,7 @@ public class SensorDataService(
         await db.DataDevices(caller).Where(d => d.Id == deviceRecordId).Select(d => d.DeviceId).FirstOrDefaultAsync(ct)
         ?? throw ApiException.NotFound("Device not found.");
 
-    private static IQueryable<SensorData> ApplyRange(IQueryable<SensorData> q, DateTime? from, DateTime? to)
+    private static IQueryable<ManipulatedSensorData> ApplyRange(IQueryable<ManipulatedSensorData> q, DateTime? from, DateTime? to)
     {
         if (from is { } f) { var fu = f.ToUniversalTime(); q = q.Where(s => s.RecordedAt >= fu); }
         if (to is { } t) { var tu = t.ToUniversalTime(); q = q.Where(s => s.RecordedAt <= tu); }

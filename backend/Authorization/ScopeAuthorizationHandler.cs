@@ -55,8 +55,9 @@ public static class ScopeFilters
         c.IsSuperAdmin ? db.GpsLocationData
         : db.GpsLocationData.Where(g => db.DataDevices(c).Select(d => d.DeviceId).Contains(g.DeviceCode));
 
-    public static IQueryable<SensorData> VisibleSensorData(this VayuVataDbContext db, CurrentUser c) =>
-        c.IsSuperAdmin ? db.SensorData
-        : db.SensorData.Where(s => db.DataDevices(c).Select(d => d.DeviceId).Contains(s.DeviceCode));
+    /// <summary>Processed readings (dbo.ManipulatedSensorData) of devices the caller may read. The raw dbo.SensorData table is never exposed.</summary>
+    public static IQueryable<ManipulatedSensorData> VisibleSensorData(this VayuVataDbContext db, CurrentUser c) =>
+        c.IsSuperAdmin ? db.ManipulatedSensorData
+        : db.ManipulatedSensorData.Where(s => db.DataDevices(c).Select(d => d.DeviceId).Contains(s.DeviceCode));
 }
 

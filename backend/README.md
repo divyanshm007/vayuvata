@@ -259,6 +259,8 @@ after the device is reflashed with its real `vv_` key.
 
 ## Sensor-data processing in SQL Server (`dbo.ManipulatedSensorData`)
 
+**API reads use only `dbo.ManipulatedSensorData`.** `GET /sensor-data`, `GET /sensor-data/{id}`, `GET /devices/{id}/sensor-data/latest|history` and the `POST /sensor-data` response return the processed row (same JSON shape, same `id` as the raw reading; `aqi`/`aqiStatus` are the SQL-calculated values). `dbo.SensorData` is written by ingestion and read only by the SQL trigger; the API never returns it. The frontend needs no change.
+
 ```
 ESP32 -> API -> dbo.SensorData -> AFTER INSERT trigger -> dbo.ProcessSensorData -> dbo.ManipulatedSensorData
 ```

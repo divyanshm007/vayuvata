@@ -8,7 +8,7 @@ using VayuVata.Services;
 
 namespace VayuVata.Controllers;
 
-/// <summary>Sensor readings: ESP32 ingestion (device key) and authorized reads (JWT).</summary>
+/// <summary>Sensor readings: ESP32 ingestion (device key) and authorized reads (JWT). Reads return the processed rows of dbo.ManipulatedSensorData (AQI calculated in SQL); the raw dbo.SensorData table is never returned.</summary>
 [ApiController]
 [Produces("application/json")]
 public class SensorDataController(SensorDataService sensors) : ControllerBase
