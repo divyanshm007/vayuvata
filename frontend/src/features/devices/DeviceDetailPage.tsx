@@ -83,19 +83,19 @@ export default function DeviceDetailPage() {
               <Typography fontWeight={700} sx={{ p: 2.5, pb: 1 }}>Reading history</Typography>
               <TableContainer>
                 <Table size="small" aria-label="Reading history">
-                  <TableHead><TableRow><TableCell>Recorded (IST)</TableCell><TableCell>AQI</TableCell><TableCell align="right">PM2.5</TableCell><TableCell align="right">PM10</TableCell><TableCell align="right">Temp</TableCell><TableCell align="right">Humidity</TableCell></TableRow></TableHead>
+                  <TableHead><TableRow><TableCell>Recorded (IST)</TableCell><TableCell>AQI</TableCell><TableCell align="right">PM2.5</TableCell><TableCell align="right">PM10</TableCell><TableCell align="right">Temp</TableCell><TableCell align="right">Humidity</TableCell><TableCell align="right">Outer temp</TableCell><TableCell align="right">Outer hum.</TableCell></TableRow></TableHead>
                   <TableBody>
                     {readings.data?.items.map((x) => (
                       <TableRow key={x.id} hover>
                         <TableCell>{fmtWallClock(x.recordedAt, true)}</TableCell><TableCell><AqiBadge aqi={x.aqi} status={x.aqiStatus} /></TableCell>
                         <TableCell align="right">{fmtNum(x.pm25)}</TableCell><TableCell align="right">{fmtNum(x.pm10)}</TableCell>
-                        <TableCell align="right">{fmtNum(x.temperature)}°C</TableCell><TableCell align="right">{fmtNum(x.humidity)}%</TableCell>
+                        <TableCell align="right">{fmtNum(x.temperature)}°C</TableCell><TableCell align="right">{fmtNum(x.humidity)}%</TableCell><TableCell align="right">{fmtNum(x.outerTemperature)}°C</TableCell><TableCell align="right">{fmtNum(x.outerHumidity)}%</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
               </TableContainer>
-              {readings.loading && <TableSkeleton cols={6} rows={4} />}
+              {readings.loading && <TableSkeleton cols={8} rows={4} />}
               {!!readings.error && <ErrorState error={readings.error} onRetry={readings.reload} />}
               {!readings.loading && !readings.error && readings.data?.items.length === 0 && <EmptyState title="No readings in this range" />}
               <PaginationBar page={rPage} result={readings.data} pageSize={rSize} onPage={setRPage} onPageSize={setRSize} />

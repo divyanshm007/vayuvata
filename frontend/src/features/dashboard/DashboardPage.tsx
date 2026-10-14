@@ -83,7 +83,7 @@ export default function DashboardPage() {
   const active = c?.activeDevices ?? 0;
   const busy = dev.loading || latest.loading;
   const stale = !!cur && !isRecentlyReporting(cur.recordedAt);
-  const col = (k: 'aqi' | 'pm25' | 'pm10' | 'temperature' | 'humidity') => spark.map((p) => p[k]);
+  const col = (k: 'aqi' | 'pm25' | 'pm10' | 'temperature' | 'humidity' | 'outerTemperature' | 'outerHumidity') => spark.map((p) => p[k]);
 
   const opCards: Array<Parameters<typeof OpCard>[0]> = [
     { label: r === 'User' ? 'My Devices' : 'Accessible Devices', icon: SensorsOutlined, loading: counts.loading, value: fmtNum(c?.devices, 0), to: '/devices',
@@ -125,7 +125,7 @@ export default function DashboardPage() {
       {!!counts.error && <Alert severity="warning" sx={{ mb: 2 }}>Some summary figures could not be loaded.</Alert>}
 
       {/* air-quality metrics (latest reading of the most recently reporting device) */}
-      <Box sx={{ ...grid({ xs: 'repeat(2, minmax(0, 1fr))', md: 'repeat(3, minmax(0, 1fr))', lg: 'repeat(5, minmax(0, 1fr))' }), mb: 2 }}>
+      <Box sx={{ ...grid({ xs: 'repeat(2, minmax(0, 1fr))', md: 'repeat(3, minmax(0, 1fr))', lg: 'repeat(4, minmax(0, 1fr))' }), mb: 2 }}>
         <Box sx={{ gridColumn: { xs: 'span 2', md: 'span 1' } }}>
           <MetricCard label="Current AQI" icon={EnergySavingsLeafOutlined} accent={cat.color} tint={cat.bg} loading={busy} value={fmtNum(cur?.aqi, 0)}
             sub={cur ? <>{freshest?.device.deviceName}{stale && <Box component="span" sx={{ ml: 0.75, color: '#b45309', fontWeight: 600 }}>· stale</Box>}</> : 'No readings yet'}
@@ -136,6 +136,8 @@ export default function DashboardPage() {
         <MetricCard label="PM10" unit="µg/m³" icon={BlurOnOutlined} accent={C.pm10} tint="#E4DBFF" loading={busy} value={fmtNum(cur?.pm10, 0)} delta={deltaVsAverage(col('pm10'), 'down')} spark={col('pm10')} />
         <MetricCard label="Temperature" unit="°C" icon={ThermostatOutlined} accent="#EA580C" tint="#FFDDBA" loading={busy} value={fmtNum(cur?.temperature)} delta={deltaVsAverage(col('temperature'), 'neutral')} spark={col('temperature')} />
         <MetricCard label="Humidity" unit="%" icon={WaterDropOutlined} accent={C.hum} tint="#BDF3E6" loading={busy} value={fmtNum(cur?.humidity, 0)} delta={deltaVsAverage(col('humidity'), 'neutral')} spark={col('humidity')} />
+        <MetricCard label="Outer temperature" unit="°C" icon={ThermostatOutlined} accent="#C2410C" tint="#FFE4CC" loading={busy} value={fmtNum(cur?.outerTemperature)} delta={deltaVsAverage(col('outerTemperature'), 'neutral')} spark={col('outerTemperature')} />
+        <MetricCard label="Outer humidity" unit="%" icon={WaterDropOutlined} accent="#0E7490" tint="#CFF3F8" loading={busy} value={fmtNum(cur?.outerHumidity, 0)} delta={deltaVsAverage(col('outerHumidity'), 'neutral')} spark={col('outerHumidity')} />
       </Box>
 
       {/* operations */}

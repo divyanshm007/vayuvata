@@ -60,7 +60,7 @@ export default function ReadingsPage() {
                 <TableCell sortDirection={dir('aqi')}><TableSortLabel active={sortBy === 'aqi'} direction={sortBy === 'aqi' ? sortDir : 'desc'} onClick={() => sort('aqi')}>AQI</TableSortLabel></TableCell>
                 <TableCell align="right">PM2.5</TableCell><TableCell align="right">PM10</TableCell>
                 <TableCell align="right">NO₂</TableCell><TableCell align="right">SO₂</TableCell><TableCell align="right">CO</TableCell>
-                <TableCell align="right">TVOC</TableCell><TableCell align="right">Temp</TableCell><TableCell align="right">Humidity</TableCell>
+                <TableCell align="right">TVOC</TableCell><TableCell align="right">Temp</TableCell><TableCell align="right">Humidity</TableCell><TableCell align="right">Outer temp</TableCell><TableCell align="right">Outer hum.</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -72,13 +72,13 @@ export default function ReadingsPage() {
                   <TableCell align="right">{fmtNum(r.pm25)}</TableCell><TableCell align="right">{fmtNum(r.pm10)}</TableCell>
                   <TableCell align="right">{fmtNum(r.no2Ppm, 3)}</TableCell><TableCell align="right">{fmtNum(r.so2Ppm, 3)}</TableCell>
                   <TableCell align="right">{fmtNum(r.coPpm, 2)}</TableCell><TableCell align="right">{fmtNum(r.tvocPpb, 0)}</TableCell>
-                  <TableCell align="right">{fmtNum(r.temperature)}°C</TableCell><TableCell align="right">{fmtNum(r.humidity)}%</TableCell>
+                  <TableCell align="right">{fmtNum(r.temperature)}°C</TableCell><TableCell align="right">{fmtNum(r.humidity)}%</TableCell><TableCell align="right">{fmtNum(r.outerTemperature)}°C</TableCell><TableCell align="right">{fmtNum(r.outerHumidity)}%</TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </TableContainer>
-        {s.loading && <TableSkeleton cols={8} />}
+        {s.loading && <TableSkeleton cols={10} />}
         {!!s.error && <ErrorState error={s.error} onRetry={s.reload} />}
         {!s.loading && !s.error && s.data?.items.length === 0 && <EmptyState title="No readings found" hint="Adjust the filters, or wait for devices to report." />}
         <PaginationBar page={page} result={s.data} pageSize={pageSize} onPage={setPage} onPageSize={setPageSize} />

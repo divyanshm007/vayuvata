@@ -103,10 +103,12 @@ export function TempHumChart({ data }: { data: Row[] }) {
         {xAxis}
         <YAxis yAxisId="t" tick={AXIS} width={44} unit="°" />
         <YAxis yAxisId="h" orientation="right" tick={AXIS} width={44} unit="%" />
-        <Tooltip labelFormatter={tooltipLabel} formatter={(v: number, n: string) => [n === 'Humidity' ? `${v} %` : `${v} °C`, n]} />
+        <Tooltip labelFormatter={tooltipLabel} formatter={(v: number, n: string) => [n.includes('umidity') ? `${v} %` : `${v} °C`, n]} />
         <Legend />
         <Line yAxisId="t" type="monotone" dataKey="temperature" name="Temperature" stroke={C.temp} strokeWidth={2} dot={false} connectNulls />
         <Line yAxisId="h" type="monotone" dataKey="humidity" name="Humidity" stroke={C.hum} strokeWidth={2} dot={false} connectNulls />
+        <Line yAxisId="t" type="monotone" dataKey="outerTemperature" name="Outer temperature" stroke={C.temp} strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls />
+        <Line yAxisId="h" type="monotone" dataKey="outerHumidity" name="Outer humidity" stroke={C.hum} strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls />
       </LineChart>
     </Frame>
   );
@@ -130,7 +132,7 @@ export function DeviceAqiBars({ items }: { items: Array<{ name: string; aqi: num
   );
 }
 
-const UNIT: Record<string, string> = { PM10: ' µg/m³', 'PM2.5': ' µg/m³', Temperature: ' °C', Humidity: ' %' };
+const UNIT: Record<string, string> = { PM10: ' µg/m³', 'PM2.5': ' µg/m³', Temperature: ' °C', Humidity: ' %', 'Outer temperature': ' °C', 'Outer humidity': ' %' };
 
 /** AQI, PM2.5 and PM10 on the left axis; temperature and humidity on the right. Real readings only: gaps stay gaps. */
 export function CombinedTrendChart({ data }: { data: Row[] }) {
@@ -156,6 +158,8 @@ export function CombinedTrendChart({ data }: { data: Row[] }) {
         <Area yAxisId="l" type="monotone" dataKey="aqi" name="AQI" stroke={C.aqi} fill="url(#gAqi)" strokeWidth={2.2} dot={data.length < 30} connectNulls />
         <Line yAxisId="r" type="monotone" dataKey="temperature" name="Temperature" stroke={C.temp} strokeWidth={1.8} dot={false} connectNulls />
         <Line yAxisId="r" type="monotone" dataKey="humidity" name="Humidity" stroke={C.hum} strokeWidth={1.8} dot={false} connectNulls />
+        <Line yAxisId="r" type="monotone" dataKey="outerTemperature" name="Outer temperature" stroke={C.temp} strokeWidth={1.6} strokeDasharray="5 4" dot={false} connectNulls />
+        <Line yAxisId="r" type="monotone" dataKey="outerHumidity" name="Outer humidity" stroke={C.hum} strokeWidth={1.6} strokeDasharray="5 4" dot={false} connectNulls />
       </ComposedChart>
     </Frame>
   );

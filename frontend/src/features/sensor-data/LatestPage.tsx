@@ -38,7 +38,7 @@ export default function LatestPage() {
                 </Stack>
                 {r ? (
                   <Grid container spacing={1}>
-                    {[['PM2.5', r.pm25, 'µg/m³'], ['PM10', r.pm10, 'µg/m³'], ['Temp', r.temperature, '°C'], ['Humidity', r.humidity, '%']].map(([k, v, u]) => (
+                    {[['PM2.5', r.pm25, 'µg/m³'], ['PM10', r.pm10, 'µg/m³'], ['Temp', r.temperature, '°C'], ['Humidity', r.humidity, '%'], ['Outer temp', r.outerTemperature, '°C'], ['Outer humidity', r.outerHumidity, '%']].map(([k, v, u]) => (
                       <Grid item xs={6} key={k as string}><Typography variant="caption" color="text.secondary">{k as string}</Typography>
                         <Typography fontWeight={600}>{fmtNum(v as number | null)} <Typography component="span" variant="caption" color="text.secondary">{u as string}</Typography></Typography></Grid>
                     ))}

@@ -27,6 +27,8 @@ const SERIES = [
   { key: 'pm10', label: 'PM10', color: C.pm10, unit: ' µg/m³', axis: 'l' },
   { key: 'temperature', label: 'Temp', color: C.temp, unit: ' °C', axis: 'r' },
   { key: 'humidity', label: 'Humidity', color: C.hum, unit: ' %', axis: 'r' },
+  { key: 'outerTemperature', label: 'Outer temp', color: '#C2410C', unit: ' °C', axis: 'r' },
+  { key: 'outerHumidity', label: 'Outer hum.', color: '#0E7490', unit: ' %', axis: 'r' },
 ] as const;
 
 /**
