@@ -4,6 +4,7 @@ import type {
   AdminUsersPage, AssignmentDto, CreateDeviceRequest, CreateManagedUserRequest, CreateUserRequest, DeviceDto, DeviceQuery,
   DeviceKeyHashDto, DeviceWithKeyDto, HealthResponse, HistoryQuery, LoginResponse, PageParams, PagedResult, Profile, SensorDataDto,
   SensorDataQuery, UpdateDeviceRequest, UpdateUserRequest, UserDto, UserQuery,
+  GovDeviceComparison, GovStatus, GovSyncResult,
 } from '../types/api';
 
 const data = <T,>(p: Promise<{ data: T }>) => p.then((r) => r.data);
@@ -63,4 +64,10 @@ export const healthApi = {
     axios
       .get<HealthResponse>(`${API_PREFIX}/health`, { timeout: 10_000, validateStatus: (s) => s === 200 || s === 503 })
       .then((r) => r.data),
+};
+
+export const governmentApi = {
+  status: () => data(http.get<GovStatus>('/government/status')),
+  comparison: (radiusKm = 25) => data(http.get<GovDeviceComparison[]>('/government/comparison', { params: { radiusKm } })),
+  sync: () => data(http.post<GovSyncResult>('/government/sync', undefined, { timeout: 180_000 })),
 };

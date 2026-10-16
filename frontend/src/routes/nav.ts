@@ -1,3 +1,4 @@
+import CompareArrowsOutlined from '@mui/icons-material/CompareArrowsOutlined';
 import type { SvgIconComponent } from '@mui/icons-material';
 import DashboardOutlined from '@mui/icons-material/DashboardOutlined';
 import PeopleOutline from '@mui/icons-material/PeopleOutline';
@@ -33,6 +34,7 @@ export const NAV: Record<Role, NavItem[]> = {
     { label: 'Sensor Readings', to: '/readings', icon: TableChartOutlined },
     { label: 'AQI Analytics', to: '/analytics', icon: InsightsOutlined },
     { label: 'Historical Reports', to: '/reports', icon: AssessmentOutlined },
+    { label: 'Gov Comparison', to: '/gov-comparison', icon: CompareArrowsOutlined },
     { label: 'System Health', to: '/health', icon: HealthAndSafetyOutlined },
     ...profile,
   ],

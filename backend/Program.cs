@@ -45,6 +45,10 @@ builder.Services.Configure<IngestOptions>(config.GetSection("Ingest"));
 builder.Services.Configure<DeviceAuthOptions>(config.GetSection("DeviceAuth"));
 builder.Services.Configure<RefreshTokenCleanupOptions>(config.GetSection("RefreshTokens:Cleanup"));
 builder.Services.AddHostedService<RefreshTokenCleanupService>();
+builder.Services.Configure<GovDataOptions>(config.GetSection("DataGov"));
+builder.Services.AddHttpClient("datagov", c => { c.Timeout = TimeSpan.FromSeconds(60); });
+builder.Services.AddScoped<GovernmentDataService>();
+builder.Services.AddHostedService<GovernmentDataBackgroundService>();
 
 // ---- Database ----
 builder.Services.AddDbContext<VayuVataDbContext>(o =>

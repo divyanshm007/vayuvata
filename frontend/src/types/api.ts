@@ -59,3 +59,34 @@ export interface HistoryQuery extends PageParams { from?: string; to?: string; s
 export interface HealthResponse { status: string; database: string; timeUtc: string }
 
 export interface DeviceKeyHashDto { id: number; deviceId: string; apiKeyHash: string | null }
+
+// ---- Government (CPCB) comparison, SuperAdmin only ----
+export interface GovStationDto {
+  id: number; name: string; city: string; state: string; latitude: number; longitude: number;
+  observedAt: string | null; distanceKm: number | null; pm25: number | null; pm10: number | null;
+  calculatedAqi: number | null; calculatedAqiStatus: string | null;
+}
+export interface GovPollutantDto { pollutant: string; avg: number | null; min: number | null; max: number | null; unit: string }
+export interface GovComparisonRow {
+  parameter: string; unit: string; device: number | null; government: number | null;
+  difference: number | null; percentDifference: number | null; comparable: boolean; note: string | null;
+}
+export interface GovDeviceSide {
+  deviceId: string; deviceName: string | null; location: { latitude: number; longitude: number } | null;
+  locationRecordedAt: string | null; locationSource: string | null; latestReadingAt: string | null; isLastKnown: boolean;
+  latestAqi: number | null; latestAqiStatus: string | null; windowSamples: number; windowFrom: string | null; windowTo: string | null;
+  pm25: number | null; pm10: number | null; no2Ppm: number | null; so2Ppm: number | null; coPpm: number | null; tvocPpb: number | null;
+  temperature: number | null; humidity: number | null; outerTemperature: number | null; outerHumidity: number | null;
+  aqi: number | null; aqiStatus: string | null;
+}
+export interface GovDeviceComparison {
+  device: GovDeviceSide;
+  government: { station: GovStationDto | null; mappedAt: string | null; pollutants: GovPollutantDto[] };
+  rows: GovComparisonRow[]; status: 'ok' | 'stale' | 'device_offline' | 'no_location' | 'no_station' | 'no_government_data'; statusMessage: string;
+  governmentAgeMinutes: number | null; nearbyStations: GovStationDto[];
+}
+export interface GovStatus {
+  apiKeyConfigured: boolean; stationCount: number; mappedDevices: number; lastSyncAt: string | null; lastSyncStatus: string | null;
+  lastSyncError: string | null; lastSyncRecords: number; latestObservedAt: string | null; source: string;
+}
+export interface GovSyncResult { status: string; recordsFetched: number; stationsAdded: number; readingsAdded: number; devicesMatched: number; devicesSwitched: number; error: string | null }

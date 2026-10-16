@@ -113,6 +113,190 @@ namespace VayuVata.Migrations
                     b.ToTable("DeviceAssignments", (string)null);
                 });
 
+            modelBuilder.Entity("VayuVata.Models.DeviceStationMapping", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("DeviceCode")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasColumnName("device_id");
+
+                    b.Property<decimal>("DeviceLatitude")
+                        .HasPrecision(9, 6)
+                        .HasColumnType("decimal(9,6)");
+
+                    b.Property<decimal>("DeviceLongitude")
+                        .HasPrecision(9, 6)
+                        .HasColumnType("decimal(9,6)");
+
+                    b.Property<decimal>("DistanceKm")
+                        .HasPrecision(8, 3)
+                        .HasColumnType("decimal(8,3)");
+
+                    b.Property<DateTime>("MatchedAt")
+                        .HasColumnType("datetime2(0)");
+
+                    b.Property<string>("Method")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<int>("StationId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("ValidTo")
+                        .HasColumnType("datetime2(0)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DeviceCode")
+                        .IsUnique()
+                        .HasDatabaseName("UX_DeviceStationMappings_current")
+                        .HasFilter("[ValidTo] IS NULL");
+
+                    b.HasIndex("StationId");
+
+                    b.ToTable("DeviceStationMappings", (string)null);
+                });
+
+            modelBuilder.Entity("VayuVata.Models.GovernmentStation", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("City")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<DateTime>("LastSeenAt")
+                        .HasColumnType("datetime2(0)");
+
+                    b.Property<decimal>("Latitude")
+                        .HasPrecision(9, 6)
+                        .HasColumnType("decimal(9,6)");
+
+                    b.Property<decimal>("Longitude")
+                        .HasPrecision(9, 6)
+                        .HasColumnType("decimal(9,6)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name", "Latitude", "Longitude")
+                        .IsUnique()
+                        .HasDatabaseName("UX_GovernmentStations_identity");
+
+                    b.ToTable("GovernmentStations", (string)null);
+                });
+
+            modelBuilder.Entity("VayuVata.Models.GovernmentStationReading", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<decimal?>("AvgValue")
+                        .HasPrecision(10, 2)
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<DateTime>("FetchedAt")
+                        .HasColumnType("datetime2(0)");
+
+                    b.Property<decimal?>("MaxValue")
+                        .HasPrecision(10, 2)
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<decimal?>("MinValue")
+                        .HasPrecision(10, 2)
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<DateTime>("ObservedAt")
+                        .HasColumnType("datetime2(0)");
+
+                    b.Property<string>("Pollutant")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<int>("StationId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("StationId", "Pollutant", "ObservedAt")
+                        .IsUnique()
+                        .HasDatabaseName("UX_GovernmentStationReadings_identity");
+
+                    b.ToTable("GovernmentStationReadings", (string)null);
+                });
+
+            modelBuilder.Entity("VayuVata.Models.GovernmentSyncLog", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime?>("CompletedAt")
+                        .HasColumnType("datetime2(0)");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<int>("ReadingsAdded")
+                        .HasColumnType("int");
+
+                    b.Property<int>("RecordsFetched")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("datetime2(0)");
+
+                    b.Property<int>("StationsAdded")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(16)");
+
+                    b.Property<string>("Trigger")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(16)");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("GovernmentSyncLogs", (string)null);
+                });
+
             modelBuilder.Entity("VayuVata.Models.GpsLocationData", b =>
                 {
                     b.Property<long>("Id")
@@ -571,6 +755,37 @@ namespace VayuVata.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("VayuVata.Models.DeviceStationMapping", b =>
+                {
+                    b.HasOne("VayuVata.Models.Device", "Device")
+                        .WithMany()
+                        .HasForeignKey("DeviceCode")
+                        .HasPrincipalKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("VayuVata.Models.GovernmentStation", "Station")
+                        .WithMany()
+                        .HasForeignKey("StationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Device");
+
+                    b.Navigation("Station");
+                });
+
+            modelBuilder.Entity("VayuVata.Models.GovernmentStationReading", b =>
+                {
+                    b.HasOne("VayuVata.Models.GovernmentStation", "Station")
+                        .WithMany("Readings")
+                        .HasForeignKey("StationId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Station");
+                });
+
             modelBuilder.Entity("VayuVata.Models.GpsLocationData", b =>
                 {
                     b.HasOne("VayuVata.Models.Device", "Device")
@@ -630,6 +845,11 @@ namespace VayuVata.Migrations
             modelBuilder.Entity("VayuVata.Models.Device", b =>
                 {
                     b.Navigation("Assignments");
+                });
+
+            modelBuilder.Entity("VayuVata.Models.GovernmentStation", b =>
+                {
+                    b.Navigation("Readings");
                 });
 
             modelBuilder.Entity("VayuVata.Models.User", b =>
