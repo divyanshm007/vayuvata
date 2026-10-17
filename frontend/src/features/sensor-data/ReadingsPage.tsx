@@ -1,12 +1,16 @@
 import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Card, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TableSortLabel, TextField, Button } from '@mui/material';
+import { Alert, Card, CircularProgress, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TableSortLabel, TextField, Button } from '@mui/material';
+import TableViewOutlined from '@mui/icons-material/TableViewOutlined';
 import { sensorApi } from '../../api/services';
 import { AqiBadge, PageHeader, PaginationBar } from '../../components/ui';
-import { EmptyState, ErrorState, TableSkeleton } from '../../components/feedback';
-import { fmtNum, fmtWallClock, toApiDateTime } from '../../utils/format';
+import { EmptyState, ErrorState, TableSkeleton, useToast } from '../../components/feedback';
+import { downloadReadingsXlsx, exportFileName, fetchReadingsForExport, EXPORT_MAX_ROWS } from '../../utils/exportExcel';
+import { errorMessage } from '../../utils/errors';
+import { fmtNum, fmtWallClock, toApiDateTime, toApiDateTimeEnd } from '../../utils/format';
 import { useAsync } from '../../utils/useAsync';
 import { useDevices } from '../devices/useDevices';
+import { HISTORY_PRESETS, RangePicker, presetRange, useRange } from '../analytics/useSeries';
 import { useAuth } from '../auth/AuthContext';
 import { ReadingDialog } from './ReadingParts';
 import type { SensorDataQuery } from '../../types/api';
@@ -19,38 +23,50 @@ export default function ReadingsPage() {
   const { devices } = useDevices();
   const [params] = useSearchParams();
   const [deviceId, setDeviceId] = useState(params.get('device') ?? ''); // deep link from the device map
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+  const [range, setRange] = useRange('all');
+  const from = range.from, to = range.to;
   const [sortBy, setSortBy] = useState<Sort>('recordedAt');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [openId, setOpenId] = useState<number | null>(null);
+  const toast = useToast();
+  const [exporting, setExporting] = useState(false);
 
   const invalidRange = !!from && !!to && from > to;
   const s = useAsync(
-    () => sensorApi.list({ deviceId: deviceId || undefined, from: toApiDateTime(from), to: toApiDateTime(to), sortBy, sortDir, page, pageSize }),
+    () => sensorApi.list({ deviceId: deviceId || undefined, from: toApiDateTime(from), to: toApiDateTimeEnd(to), sortBy, sortDir, page, pageSize }),
     [deviceId, from, to, sortBy, sortDir, page, pageSize], !invalidRange,
   );
   const reset = <T,>(set: (v: T) => void) => (v: T) => { set(v); setPage(1); };
   const sort = (k: Sort) => { if (sortBy === k) setSortDir(sortDir === 'asc' ? 'desc' : 'asc'); else { setSortBy(k); setSortDir('desc'); } setPage(1); };
   const dir = (k: Sort) => (sortBy === k ? sortDir : false);
 
+  const exportExcel = async () => {
+    setExporting(true);
+    try {
+      const { rows, truncated } = await fetchReadingsForExport({ deviceId: deviceId || undefined, from: toApiDateTime(from), to: toApiDateTimeEnd(to), sortBy, sortDir });
+      if (rows.length === 0) { toast('There are no readings to export for these filters.', 'info'); return; }
+      await downloadReadingsXlsx(rows, exportFileName([deviceId || 'all-devices', from ? from.slice(0, 10) : undefined]));
+      toast(truncated ? `Exported the latest ${rows.length} readings (export is capped at ${EXPORT_MAX_ROWS}).` : `Exported ${rows.length} readings.`, truncated ? 'info' : 'success');
+    } catch (e) { toast(errorMessage(e), 'error'); } finally { setExporting(false); }
+  };
+
   return (
     <>
       <PageHeader title={title} subtitle="Readings from devices in your scope. Times are device local time (IST)."
-        crumbs={[{ label: 'Home', to: '/' }, { label: title }]} />
+        crumbs={[{ label: 'Home', to: '/' }, { label: title }]}
+        actions={<Button variant="contained" startIcon={exporting ? <CircularProgress size={16} color="inherit" /> : <TableViewOutlined />} disabled={exporting || invalidRange} onClick={exportExcel}>Export Excel</Button>} />
       <Card>
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} sx={{ p: 2 }} alignItems={{ md: 'center' }}>
           <TextField select label="Device" value={deviceId} onChange={(e) => reset(setDeviceId)(e.target.value)} sx={{ maxWidth: { md: 280 } }}>
             <MenuItem value="">All devices</MenuItem>
             {devices.map((d) => <MenuItem key={d.id} value={d.deviceId}>{d.deviceName} ({d.deviceId})</MenuItem>)}
           </TextField>
-          <TextField type="datetime-local" label="From" InputLabelProps={{ shrink: true }} value={from} onChange={(e) => reset(setFrom)(e.target.value)} sx={{ maxWidth: { md: 230 } }} />
-          <TextField type="datetime-local" label="To" InputLabelProps={{ shrink: true }} value={to} onChange={(e) => reset(setTo)(e.target.value)}
-            error={invalidRange} helperText={invalidRange ? '“To” must be after “From”.' : undefined} sx={{ maxWidth: { md: 230 } }} />
-          {(deviceId || from || to) && <Button onClick={() => { setDeviceId(''); setFrom(''); setTo(''); setPage(1); }}>Clear</Button>}
+          <RangePicker value={range} onChange={(r) => { setRange(r); setPage(1); }} presets={HISTORY_PRESETS} />
+          {(deviceId || range.key !== 'all') && <Button onClick={() => { setDeviceId(''); setRange(presetRange('all')); setPage(1); }}>Clear</Button>}
         </Stack>
+        {invalidRange && <Alert severity="warning" sx={{ mx: 2, mb: 2 }}>“To” must be after “From”.</Alert>}
         <TableContainer>
           <Table size="small" aria-label="Sensor readings">
             <TableHead>

@@ -36,7 +36,7 @@ const SERIES = [
  * follow the pointer and show the exact time and values at that point. Also: slider, arrow and zoom buttons, Shift/horizontal
  * wheel to pan, Ctrl + wheel to zoom. Only real readings are drawn.
  */
-export function InteractiveTrendChart({ data, truncated }: { data: Pt[]; truncated?: boolean }) {
+export function InteractiveTrendChart({ data, bucketMinutes = 1 }: { data: Pt[]; bucketMinutes?: number }) {
   const n = data.length;
   const initialSpan = Math.min(DEFAULT_SPAN, n);
   const [span, setSpan] = useState(initialSpan);
@@ -198,7 +198,7 @@ export function InteractiveTrendChart({ data, truncated }: { data: Pt[]; truncat
         </Box>
       )}
       <Typography sx={{ fontSize: 11, color: tokens.muted, mt: 0.25 }}>
-        Showing {view.length} of {n} loaded readings{truncated ? ' (the latest 300 in this range)' : ''} · drag the chart or use the slider to move through time · Ctrl + scroll to zoom
+        Showing {view.length} of {n} loaded readings{bucketMinutes > 1 ? ` (each point is the average of ${bucketMinutes} minutes, so the whole range is shown)` : ''} · drag the chart or use the slider to move through time · Ctrl + scroll to zoom
       </Typography>
     </Box>
   );

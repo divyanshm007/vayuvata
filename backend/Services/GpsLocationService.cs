@@ -107,6 +107,23 @@ public class GpsLocationService(VayuVataDbContext db, IValidator<CreateGpsLocati
     }
 
     /// <summary>
+    /// GPS history for the signed-in caller: SuperAdmin all devices, Admin their own and their Users' devices, User their own. Filtered and paged on the server.
+    /// </summary>
+    public async Task<PagedResult<GpsLocationDto>> HistoryAsync(GpsHistoryQuery q, CurrentUser caller, CancellationToken ct)
+    {
+        var query = db.VisibleGpsLocations(caller).AsNoTracking();
+        if (!string.IsNullOrWhiteSpace(q.DeviceId)) { var code = q.DeviceId.Trim(); query = query.Where(g => g.DeviceCode == code); }
+        if (q.From is { } f) { var fs = ToIstWallClock(f); query = query.Where(g => g.RecordedAt >= fs); }
+        if (q.To is { } t) { var ts = ToIstWallClock(t); query = query.Where(g => g.RecordedAt <= ts); }
+        if (q.FixOnly == true) query = query.Where(g => g.HasFix);
+        var asc = string.Equals(q.SortDir, "asc", StringComparison.OrdinalIgnoreCase);
+        query = asc ? query.OrderBy(g => g.RecordedAt).ThenBy(g => g.Id) : query.OrderByDescending(g => g.RecordedAt).ThenByDescending(g => g.Id);
+        var page = await Project(query).ToPagedAsync(q, ct);
+        return new PagedResult<GpsLocationDto>
+        { Items = page.Items.Select(Map).ToList(), Page = page.Page, PageSize = page.PageSize, TotalCount = page.TotalCount, HasNextPage = page.HasNextPage };
+    }
+
+    /// <summary>
     /// Current position of one device, by physical deviceId: (1) the device must exist (404), (2) it must be ACTIVE (409 device_inactive),
     /// (3) its newest GPS report is returned (404 when it has none yet).
     /// </summary>

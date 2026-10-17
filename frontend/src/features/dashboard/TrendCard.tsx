@@ -10,11 +10,11 @@ import { useMemo } from 'react';
 
 interface Props {
   devices: DeviceDto[]; deviceId: string; onDevice: (id: string) => void; range: Range; onRange: (r: Range) => void;
-  rows: SensorDataDto[] | null; truncated: boolean; loading: boolean; error: unknown; onRetry: () => void;
+  rows: SensorDataDto[] | null; bucketMinutes?: number; loading: boolean; error: unknown; onRetry: () => void;
 }
 
 /** Chart section: the device and range controls are part of the card header, so they read as one unit with the chart. */
-export function TrendCard({ devices, deviceId, onDevice, range, onRange, rows, truncated, loading, error, onRetry }: Props) {
+export function TrendCard({ devices, deviceId, onDevice, range, onRange, rows, bucketMinutes, loading, error, onRetry }: Props) {
   const data = useMemo(() => toSeries(rows ?? []), [rows]);
   const invalid = !!range.to && range.from > range.to;
   return (
@@ -35,7 +35,7 @@ export function TrendCard({ devices, deviceId, onDevice, range, onRange, rows, t
       {loading ? <LinearProgress sx={{ height: 2 }} /> : <Box sx={{ height: 2 }} />}
       <Box sx={{ p: 2.25, pt: 1.5 }}>
         {invalid && <Alert severity="warning" sx={{ mb: 1.5 }}>“To” must be after “From”.</Alert>}
-        {error ? <ErrorState error={error} onRetry={onRetry} /> : <InteractiveTrendChart data={data} truncated={truncated} />}
+        {error ? <ErrorState error={error} onRetry={onRetry} /> : <InteractiveTrendChart data={data} bucketMinutes={bucketMinutes} />}
       </Box>
     </Card>
   );

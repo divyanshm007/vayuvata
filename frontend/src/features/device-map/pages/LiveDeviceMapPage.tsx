@@ -21,6 +21,7 @@ import { DeviceListPanel } from '../components/DeviceListPanel';
 import { DeviceLocationPopup } from '../components/DeviceLocationPopup';
 import { DeviceMap } from '../components/DeviceMap';
 import { GpsDetailsDialog } from '../components/GpsDetailsDialog';
+import { LocationHistory } from '../components/LocationHistory';
 import { useDeviceLocations } from '../hooks/useDeviceLocations';
 import type { DeviceLocation } from '../types';
 
@@ -157,6 +158,8 @@ export default function LiveDeviceMapPage() {
               </Stack>
             </AccordionDetails>
           </Accordion>
+
+          <LocationHistory devices={d.devices ?? []} />
         </>
       )}
 

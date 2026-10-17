@@ -46,6 +46,7 @@ export const NAV: Record<Role, NavItem[]> = {
     { label: 'Sensor Readings', to: '/readings', icon: TableChartOutlined },
     { label: 'AQI Analytics', to: '/analytics', icon: InsightsOutlined },
     { label: 'Historical Reports', to: '/reports', icon: AssessmentOutlined },
+    { label: 'Gov Comparison', to: '/gov-comparison', icon: CompareArrowsOutlined },
     { label: 'System Health', to: '/health', icon: HealthAndSafetyOutlined },
     ...profile,
   ],
@@ -56,6 +57,8 @@ export const NAV: Record<Role, NavItem[]> = {
     { label: 'Latest Sensor Readings', to: '/latest', icon: SpeedOutlined },
     { label: 'Reading History', to: '/readings', icon: HistoryOutlined },
     { label: 'AQI Analytics', to: '/analytics', icon: InsightsOutlined },
+    { label: 'Historical Reports', to: '/reports', icon: AssessmentOutlined },
+    { label: 'Gov Comparison', to: '/gov-comparison', icon: CompareArrowsOutlined },
     ...profile,
   ],
 };

@@ -76,8 +76,8 @@ export default function AppRoutes() {
           <Route path="readings" element={<ReadingsPage />} />
           <Route path="latest" element={<RequireRole roles={User}><LatestPage /></RequireRole>} />
           <Route path="analytics" element={<AnalyticsPage />} />
-          <Route path="reports" element={<RequireRole roles={OPS}><ReportsPage /></RequireRole>} />
-          <Route path="gov-comparison" element={<RequireRole roles={SA}><GovComparisonPage /></RequireRole>} />
+          <Route path="reports" element={<ReportsPage />} />
+          <Route path="gov-comparison" element={<GovComparisonPage />} />
           <Route path="health" element={<RequireRole roles={OPS}><HealthPage /></RequireRole>} />
           <Route path="profile" element={<ProfilePage />} />
           <Route path="change-password" element={<ChangePasswordPage />} />

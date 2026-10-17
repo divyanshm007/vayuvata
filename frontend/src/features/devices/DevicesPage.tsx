@@ -90,9 +90,9 @@ export default function DevicesPage() {
               <TextField select label="Status" value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }} sx={{ maxWidth: { md: 170 } }}>
                 <MenuItem value="">All</MenuItem><MenuItem value="active">Active</MenuItem><MenuItem value="inactive">Inactive</MenuItem>
               </TextField>
-              <TextField select label="Assignment" value={assigned} onChange={(e) => { setAssigned(e.target.value); setPage(1); }} sx={{ maxWidth: { md: 190 } }}>
+              {isSA && <TextField select label="Assignment" value={assigned} onChange={(e) => { setAssigned(e.target.value); setPage(1); }} sx={{ maxWidth: { md: 190 } }}>
                 <MenuItem value="">All</MenuItem><MenuItem value="assigned">Assigned</MenuItem><MenuItem value="unassigned">Unassigned</MenuItem>
-              </TextField>
+              </TextField>}
             </>
           )}
         </Stack>
@@ -141,8 +141,8 @@ export default function DevicesPage() {
           const d = menu.device; const close = () => setMenu(null);
           return [
             isSA && <MenuItem key="e" onClick={() => { close(); setEdit(d); }}><ListItemIcon><EditOutlined fontSize="small" /></ListItemIcon><ListItemText>Edit</ListItemText></MenuItem>,
-            d.isActive && <MenuItem key="a" onClick={() => { close(); setAssign(d); }}><ListItemIcon><LinkIcon fontSize="small" /></ListItemIcon><ListItemText>{d.assignedUserId ? 'Reassign…' : 'Assign…'}</ListItemText></MenuItem>,
-            d.assignedUserId && <MenuItem key="u" onClick={() => { close(); setPending({ kind: 'unassign', device: d }); }}><ListItemIcon><LinkOff fontSize="small" /></ListItemIcon><ListItemText>Unassign</ListItemText></MenuItem>,
+            d.isActive && <MenuItem key="a" onClick={() => { close(); setAssign(d); }}><ListItemIcon><LinkIcon fontSize="small" /></ListItemIcon><ListItemText>{isSA ? (d.assignedUserId ? 'Reassign…' : 'Assign…') : 'Assign to a user…'}</ListItemText></MenuItem>,
+            isSA && d.assignedUserId && <MenuItem key="u" onClick={() => { close(); setPending({ kind: 'unassign', device: d }); }}><ListItemIcon><LinkOff fontSize="small" /></ListItemIcon><ListItemText>Unassign</ListItemText></MenuItem>,
             isSA && <MenuItem key="s" onClick={() => { close(); setPending({ kind: 'status', device: d }); }}><ListItemIcon><PowerSettingsNew fontSize="small" /></ListItemIcon><ListItemText>{d.isActive ? 'Deactivate' : 'Activate'}</ListItemText></MenuItem>,
             isSA && <MenuItem key="h" onClick={() => { close(); setHashDevice(d); }}><ListItemIcon><BadgeOutlined fontSize="small" /></ListItemIcon><ListItemText>Show device key (hash)</ListItemText></MenuItem>,
             isSA && <MenuItem key="k" onClick={() => { close(); setPending({ kind: 'rotate', device: d }); }}><ListItemIcon><VpnKeyOutlined fontSize="small" /></ListItemIcon><ListItemText>Rotate API key…</ListItemText></MenuItem>,

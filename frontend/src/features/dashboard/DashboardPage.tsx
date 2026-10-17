@@ -149,7 +149,7 @@ export default function DashboardPage() {
         <Box sx={grid({ xs: 'minmax(0, 1fr)', lg: 'minmax(0, 1fr) 390px' })}>
           <TrendCard
             devices={dev.devices} deviceId={deviceId} onDevice={setDeviceId} range={range} onRange={setRange}
-            rows={trend.data?.rows ?? null} truncated={!!trend.data?.truncated} loading={trend.loading} error={trend.error} onRetry={trend.reload}
+            rows={trend.data?.rows ?? null} bucketMinutes={trend.data?.bucketMinutes} loading={trend.loading} error={trend.error} onRetry={trend.reload}
           />
           <Stack spacing={2}>
             <StatusDonut

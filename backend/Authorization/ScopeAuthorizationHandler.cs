@@ -34,20 +34,19 @@ public static class ScopeFilters
         : db.Users.Where(u => u.Id == c.Id);
 
     /// <summary>
-    /// Devices a caller can see in device APIs. SuperAdmin: all. Admin: devices assigned to their Users
-    /// plus unassigned devices (the pool an Admin may assign from). User: own currently-assigned devices.
+    /// Devices a caller can see in device APIs. SuperAdmin: all. Admin: devices currently assigned to themselves or to their Users
+    /// (never the unassigned pool: only the SuperAdmin hands a device to an Admin). User: own currently-assigned devices.
     /// </summary>
     public static IQueryable<Device> VisibleDevices(this VayuVataDbContext db, CurrentUser c) =>
         c.IsSuperAdmin ? db.Devices
         : c.IsAdmin ? db.Devices.Where(d =>
-            !d.Assignments.Any(a => a.IsActive) ||
-            d.Assignments.Any(a => a.IsActive && a.User.ManagerId == c.Id))
+            d.Assignments.Any(a => a.IsActive && (a.User.ManagerId == c.Id || a.UserId == c.Id)))
         : db.Devices.Where(d => d.Assignments.Any(a => a.IsActive && a.UserId == c.Id));
 
     /// <summary>Devices whose sensor data the caller may read. Unassigned devices are visible to SuperAdmin only.</summary>
     public static IQueryable<Device> DataDevices(this VayuVataDbContext db, CurrentUser c) =>
         c.IsSuperAdmin ? db.Devices
-        : c.IsAdmin ? db.Devices.Where(d => d.Assignments.Any(a => a.IsActive && a.User.ManagerId == c.Id))
+        : c.IsAdmin ? db.Devices.Where(d => d.Assignments.Any(a => a.IsActive && (a.User.ManagerId == c.Id || a.UserId == c.Id)))
         : db.Devices.Where(d => d.Assignments.Any(a => a.IsActive && a.UserId == c.Id));
 
     /// <summary>GPS reports of devices the caller may read (same scope as sensor data).</summary>

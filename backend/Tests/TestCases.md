@@ -64,7 +64,8 @@ IDs match `Run-ApiTests.ps1` and `TestResults.md`. "Auto" = executed by the scri
 | D06 / D07 | Admin assigns to another Admin's User / standalone User | 403 |
 | D08 | User assigns | 403 |
 | D09 / D10 | Admin touches / sees a device assigned outside scope | 404 |
-| D11 / D12 | Admin assigns an unassigned device to own User; Admin list scoped | 200 |
+| D05b / D05c | Admin cannot see/assign an unassigned device (404); SuperAdmin assigns a device directly to an Admin | 404 / 200 |
+| D11 / D12 | Admin passes a device assigned to them on to their own User; Admin list = own + own Users' devices only | 200 |
 | D13 | User device list | own devices only |
 | D14 / D15 / D16 | Inactive device / inactive user / Admin-role target | 409 / 409 / 400 |
 | D17 | Reassignment keeps history, one active | 2 rows, 1 active |

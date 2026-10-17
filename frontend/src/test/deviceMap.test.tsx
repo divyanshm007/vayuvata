@@ -18,7 +18,7 @@ vi.mock('../api/services', () => ({
   sensorApi: { latest: vi.fn() },
   authApi: {}, usersApi: {}, healthApi: {},
 }));
-vi.mock('../features/device-map/services/gpsDataService', () => ({ gpsDataService: { list: vi.fn(), current: vi.fn() } }));
+vi.mock('../features/device-map/services/gpsDataService', () => ({ gpsDataService: { list: vi.fn(), current: vi.fn(), history: vi.fn() } }));
 
 let role: 'SuperAdmin' | 'Admin' | 'User' = 'Admin';
 vi.mock('../features/auth/AuthContext', () => ({ useAuth: () => ({ role, user: { id: 1, name: 'Tester', email: 't@x.io', role } }) }));
@@ -52,6 +52,7 @@ beforeEach(() => {
   role = 'Admin';
   vi.mocked(sensorApi.latest).mockResolvedValue(null);
   vi.mocked(gpsDataService.current).mockResolvedValue({ kind: 'none' });
+  vi.mocked(gpsDataService.history).mockResolvedValue({ items: [], page: 1, pageSize: 20, totalCount: 0, totalPages: 0, hasNextPage: false });
 });
 
 describe('Live Device Map page', () => {
@@ -62,6 +63,21 @@ describe('Live Device Map page', () => {
     mount();
     await waitFor(() => expect(screen.getByTestId('map')).toHaveAttribute('data-markers', '5'));
     expect(screen.getByText('With GPS position').closest('div')!.parentElement).toHaveTextContent('5');
+  });
+
+  it('shows a Location history section after the data notes, listing the reports returned for the signed-in user', async () => {
+    vi.mocked(devicesApi.list).mockResolvedValue(paged([dev(1, 'A')]));
+    vi.mocked(gpsDataService.list).mockResolvedValue([gps('A', recent())]);
+    vi.mocked(gpsDataService.history).mockResolvedValue({
+      items: [{ id: 7, deviceId: 'A', recordedAt: '2026-10-17T20:06:54+05:30', receivedAt: '2026-10-17T20:06:55+05:30', fix: true, source: 'gps', lat: 28.58, lon: 77.39, altM: 200, speedKmh: 0, signalPct: 80 }],
+      page: 1, pageSize: 20, totalCount: 1, totalPages: 1, hasNextPage: false,
+    });
+    mount();
+    expect(await screen.findByText('Location history')).toBeInTheDocument();
+    expect(await screen.findByText('2026-10-17 20:06:54')).toBeInTheDocument();      // IST wall-clock text, not shifted by the browser time zone
+    const notes = screen.getByText('Data notes'), history = screen.getByText('Location history');
+    expect(notes.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(gpsDataService.history).toHaveBeenCalledWith(expect.objectContaining({ page: 1, pageSize: 20, sortDir: 'desc' }));
   });
 
   it('devices without GPS data are listed but not on the map', async () => {

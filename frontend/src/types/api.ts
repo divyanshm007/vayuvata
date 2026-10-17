@@ -56,6 +56,8 @@ export interface SensorDataQuery extends PageParams {
 }
 export interface HistoryQuery extends PageParams { from?: string; to?: string; sortDir?: 'asc' | 'desc' }
 
+export interface SensorSeriesResult { points: SensorDataDto[]; bucketMinutes: number; totalReadings: number; aggregated: boolean }
+
 export interface HealthResponse { status: string; database: string; timeUtc: string }
 
 export interface DeviceKeyHashDto { id: number; deviceId: string; apiKeyHash: string | null }
@@ -83,7 +85,7 @@ export interface GovDeviceComparison {
   device: GovDeviceSide;
   government: { station: GovStationDto | null; mappedAt: string | null; pollutants: GovPollutantDto[] };
   rows: GovComparisonRow[]; status: 'ok' | 'stale' | 'device_offline' | 'no_location' | 'no_station' | 'no_government_data'; statusMessage: string;
-  governmentAgeMinutes: number | null; nearbyStations: GovStationDto[];
+  governmentAgeMinutes: number | null; timeGapMinutes: number | null; nearbyStations: GovStationDto[];
 }
 export interface GovStatus {
   apiKeyConfigured: boolean; stationCount: number; mappedDevices: number; lastSyncAt: string | null; lastSyncStatus: string | null;

@@ -326,22 +326,25 @@ try {
     $null = Api POST "/api/v1/devices/$D3/assign" @{ userId = $U3id } $SA
     $null = Api POST "/api/v1/devices/$D4/assign" @{ userId = $S1id } $SA
     Check 'D05' 'Assigning an already-assigned device to the same user is rejected (409)' ((Api POST "/api/v1/devices/$D1/assign" @{ userId = $U1id } $SA).Status -eq 409)
+    Check 'D05b' 'Admin cannot see or assign an unassigned device (404): the unassigned pool is not visible to Admins' ((Api POST "/api/v1/devices/$D5/assign" @{ userId = $U2id } $A1).Status -eq 404 -and (Api GET "/api/v1/devices/$D5" $null $A1).Status -eq 404)
+    $sa_to_admin = Api POST "/api/v1/devices/$D5/assign" @{ userId = $A1id } $SA
+    Check 'D05c' 'SuperAdmin assigns a device directly to an Admin; the Admin then sees it' ($sa_to_admin.Status -eq 200 -and $sa_to_admin.Json.assignedUserId -eq $A1id -and (Api GET "/api/v1/devices/$D5" $null $A1).Status -eq 200)
     Check 'D06' "Admin cannot assign a device to another Admin's User (403)" ((Api POST "/api/v1/devices/$D5/assign" @{ userId = $U3id } $A1).Status -eq 403)
     Check 'D07' 'Admin cannot assign a device to a standalone User (403)' ((Api POST "/api/v1/devices/$D5/assign" @{ userId = $S1id } $A1).Status -eq 403)
     Check 'D08' 'Regular User cannot assign devices (403)' ((Api POST "/api/v1/devices/$D5/assign" @{ userId = $U1id } $U1).Status -eq 403)
     Check 'D09' "Admin cannot take a device assigned to another Admin's User (404)" ((Api POST "/api/v1/devices/$D3/assign" @{ userId = $U1id } $A1).Status -eq 404)
     Check 'D10' "Admin cannot see a device assigned outside their scope (404)" ((Api GET "/api/v1/devices/$D3" $null $A1).Status -eq 404 -and (Api GET "/api/v1/devices/$D4" $null $A1).Status -eq 404)
     $adm_assign = Api POST "/api/v1/devices/$D5/assign" @{ userId = $U2id } $A1
-    Check 'D11' 'Admin assigns an unassigned device to their own User' ($adm_assign.Status -eq 200 -and $adm_assign.Json.assignedUserId -eq $U2id)
+    Check 'D11' 'Admin passes a device assigned to them on to their own User' ($adm_assign.Status -eq 200 -and $adm_assign.Json.assignedUserId -eq $U2id)
     $dl = Api GET '/api/v1/devices?pageSize=100' $null $A1
     $dev_ids = @($dl.Json.items | ForEach-Object { $_.deviceId })
-    Check 'D12' 'Admin device list contains only scoped/unassigned devices' (($dev_ids -contains 'VVTEST-DEV-1') -and ($dev_ids -contains 'VVTEST-DEV-5') -and -not ($dev_ids -contains 'VVTEST-DEV-3') -and -not ($dev_ids -contains 'VVTEST-DEV-4')) ($dev_ids -join ',')
+    Check 'D12' 'Admin device list contains only devices assigned to them or their Users' (($dev_ids -contains 'VVTEST-DEV-1') -and ($dev_ids -contains 'VVTEST-DEV-5') -and -not ($dev_ids -contains 'VVTEST-DEV-3') -and -not ($dev_ids -contains 'VVTEST-DEV-4')) ($dev_ids -join ',')
     $ul = Api GET '/api/v1/devices?pageSize=100' $null $U1
     Check 'D13' 'User device list contains only their own devices' ($ul.Json.totalCount -eq 2 -and (@($ul.Json.items | ForEach-Object { $_.deviceId }) -contains 'VVTEST-DEV-1'))
     $null = Api PATCH "/api/v1/devices/$D6/status" @{ isActive = $false } $SA
     Check 'D14' 'Inactive device cannot be assigned (409)' ((Api POST "/api/v1/devices/$D6/assign" @{ userId = $U1id } $SA).Status -eq 409)
     Check 'D15' 'Inactive target user cannot receive a device (409)' ((Api POST "/api/v1/devices/$D5/assign" @{ userId = $in.Json.id } $SA).Status -eq 409)
-    Check 'D16' 'Devices cannot be assigned to an Admin account (400)' ((Api POST "/api/v1/devices/$D5/assign" @{ userId = $A1id } $SA).Status -eq 400)
+    Check 'D16' 'Devices cannot be assigned to a SuperAdmin account (400)' ((Api POST "/api/v1/devices/$D5/assign" @{ userId = $saId } $SA).Status -eq 400)
 
     # sensor ingestion baseline (needed before reassignment test)
     $r1 = Post-Reading 'VVTEST-DEV-1' $K1 @{ aqi = 80; pm25 = 20.5; pm10 = 40; humidity = 50; temperature = 25.5 } 30
@@ -365,6 +368,7 @@ try {
     Check 'S02' 'After reassignment the new owner sees the history; the previous owner no longer does' ($newUserHist.Json.totalCount -ge 2 -and $oldUserHist.Status -eq 404)
     $un = Api POST "/api/v1/devices/$D4/unassign" @{} $SA
     Check 'D19' 'Unassign closes the active assignment' ($un.Status -eq 200 -and $null -eq $un.Json.assignedUserId -and (Api POST "/api/v1/devices/$D4/unassign" @{} $SA).Status -eq 409)
+    Check 'D19b' 'An Admin can never unassign a device, not even one of their own Users (403)' ((Api POST "/api/v1/devices/$D1/unassign" @{} $A1).Status -eq 403)
     $null = Api POST "/api/v1/devices/$D4/assign" @{ userId = $S1id } $SA
 
     # concurrency
@@ -654,7 +658,7 @@ try {
     $null = Api PATCH "/api/v1/users/$NUid/admin-assignment" @{ managerId = $saId } $SA
     $v3 = & $see $A1 'A1'; $v3b = & $see $A2 'A2'; $v3d = & $see $SA 'SA'; $v3c = & $see $nuTok 'owner'
     Check 'N21b' 'Standalone (managed by SuperAdmin): neither Admin sees the device or data; SuperAdmin and the owner still do' ($v3.Dev -eq 404 -and $v3.Data -eq 0 -and $v3b.Dev -eq 404 -and $v3b.Data -eq 0 -and $v3d.Dev -eq 200 -and $v3d.Data -ge 2 -and $v3c.Data -eq 2)
-    Check 'N21c' 'Admins cannot assign or unassign a device whose User is outside their scope (404/403)' ((Api POST "/api/v1/devices/$ND/assign" @{ userId = $U1id } $A1).Status -eq 404 -and (Api POST "/api/v1/devices/$ND/unassign" @{} $A1).Status -eq 404 -and (Api POST "/api/v1/devices/$ND/assign" @{ userId = $NUid } $A2).Status -eq 404)
+    Check 'N21c' 'Admins cannot assign a device outside their scope (404) and can never unassign (403)' ((Api POST "/api/v1/devices/$ND/assign" @{ userId = $U1id } $A1).Status -eq 404 -and (Api POST "/api/v1/devices/$ND/unassign" @{} $A1).Status -eq 403 -and (Api POST "/api/v1/devices/$ND/assign" @{ userId = $NUid } $A2).Status -eq 404)
     $histRows = Sql $Db "SELECT COUNT(*) FROM SensorData WHERE device_id='VVTEST-N-1'"
     $asgRows = Sql $Db "SELECT COUNT(*) FROM DeviceAssignments WHERE DeviceRecordId=$ND"
     $asgUser = Sql $Db "SELECT UserId FROM DeviceAssignments WHERE DeviceRecordId=$ND AND IsActive=1"

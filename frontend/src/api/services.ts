@@ -4,7 +4,7 @@ import type {
   AdminUsersPage, AssignmentDto, CreateDeviceRequest, CreateManagedUserRequest, CreateUserRequest, DeviceDto, DeviceQuery,
   DeviceKeyHashDto, DeviceWithKeyDto, HealthResponse, HistoryQuery, LoginResponse, PageParams, PagedResult, Profile, SensorDataDto,
   SensorDataQuery, UpdateDeviceRequest, UpdateUserRequest, UserDto, UserQuery,
-  GovDeviceComparison, GovStatus, GovSyncResult,
+  GovDeviceComparison, GovStatus, GovSyncResult, SensorSeriesResult,
 } from '../types/api';
 
 const data = <T,>(p: Promise<{ data: T }>) => p.then((r) => r.data);
@@ -47,6 +47,9 @@ export const devicesApi = {
 };
 
 export const sensorApi = {
+  /** Chart series of one device: raw points, or time-bucket averages covering the WHOLE range (computed in SQL). */
+  series: (q: { deviceId: string; from?: string; to?: string; points?: number }) =>
+    data(http.get<SensorSeriesResult>('/sensor-data/series', { params: clean(q) })),
   list: (q: SensorDataQuery) => data(http.get<PagedResult<SensorDataDto>>('/sensor-data', { params: clean(q) })),
   get: (id: number) => data(http.get<SensorDataDto>(`/sensor-data/${id}`)),
   /** Resolves to null when the device has no readings yet (404). */
@@ -62,7 +65,7 @@ export const sensorApi = {
 export const healthApi = {
   get: () =>
     axios
-      .get<HealthResponse>(`${API_PREFIX}/health`, { timeout: 10_000, validateStatus: (s) => s === 200 || s === 503 })
+      .get<HealthResponse>(`${API_PREFIX}/health`, { timeout: 5_000, params: { _t: Date.now() }, validateStatus: (s) => s === 200 || s === 503 })
       .then((r) => r.data),
 };
 

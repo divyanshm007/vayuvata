@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Navigate, useLocation } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
@@ -108,7 +108,6 @@ export default function LoginPage() {
   const { login, status, sessionExpired } = useAuth();
   const theme = useTheme();
   const desktop = useMediaQuery(theme.breakpoints.up('md'));
-  const location = useLocation() as { state?: { from?: string } };
   const [show, setShow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const testAccounts = SHOW_TEST_ACCOUNTS ? readTestAccounts() : [];
@@ -116,7 +115,8 @@ export default function LoginPage() {
     resolver: zodResolver(loginSchema), defaultValues: { email: '', password: '', remember: false },
   });
 
-  if (status === 'authenticated') return <Navigate to={location.state?.from ?? '/'} replace />;
+  // Every sign-in lands on the Dashboard first (SuperAdmin, Admin and User), not on whichever page was open before.
+  if (status === 'authenticated') return <Navigate to="/" replace />;
 
   const onSubmit = handleSubmit(async (v) => {
     setError(null);

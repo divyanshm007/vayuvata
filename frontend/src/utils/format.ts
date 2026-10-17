@@ -42,3 +42,5 @@ export function isRecentlyReporting(recordedAt: string | null | undefined, minut
 
 /** datetime-local value (yyyy-MM-ddTHH:mm) -> API query value. */
 export const toApiDateTime = (v: string): string | undefined => (v ? `${v}:00` : undefined);
+/** The "To" end of a range: the picker has minute precision, so "To 01:37" must include everything up to 01:37:59. */
+export const toApiDateTimeEnd = (v: string): string | undefined => (v ? `${v}:59` : undefined);

@@ -87,6 +87,30 @@ public class SensorDataQuery : PageQuery
     public string SortDir { get; set; } = "desc";
 }
 
+/// <summary>Chart series of ONE device over a time range, averaged into time buckets so the whole range is covered.</summary>
+public class SensorSeriesQuery
+{
+    /// <summary>Physical device identifier (required), e.g. Vayu_004.</summary>
+    public string DeviceId { get; set; } = "";
+    /// <summary>Start of the range. A value without a zone is compared as typed (readings are stored as IST wall-clock). Omitted = from the first reading.</summary>
+    public DateTime? From { get; set; }
+    /// <summary>End of the range. Omitted = up to the last reading.</summary>
+    public DateTime? To { get; set; }
+    /// <summary>Upper bound of points returned (50-1000, default 300). When the range holds fewer readings they are returned as they are.</summary>
+    public int Points { get; set; } = 300;
+}
+
+public class SensorSeriesResult
+{
+    /// <summary>Oldest first. Each item is one reading, or the average of the readings in one bucket (see BucketMinutes).</summary>
+    public List<SensorDataDto> Points { get; set; } = [];
+    /// <summary>1 = raw readings, otherwise every point is the average of this many minutes.</summary>
+    public int BucketMinutes { get; set; }
+    /// <summary>Readings that fall inside the range.</summary>
+    public int TotalReadings { get; set; }
+    public bool Aggregated => BucketMinutes > 1;
+}
+
 public class HistoryQuery : PageQuery
 {
     public DateTime? From { get; set; }

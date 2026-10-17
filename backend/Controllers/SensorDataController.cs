@@ -46,6 +46,11 @@ public class SensorDataController(SensorDataService sensors) : ControllerBase
     public async Task<ActionResult<PagedResult<SensorDataDto>>> List([FromQuery] SensorDataQuery q, CancellationToken ct) =>
         await sensors.QueryAsync(q, Me, ct);
 
+    /// <summary>Chart series of one device over a range, averaged into time buckets so the WHOLE range is covered (not just the newest readings).</summary>
+    /// <remarks>Up to <c>points</c> (50-1000, default 300) values. A range with fewer readings returns them unchanged (bucketMinutes = 1). Out-of-scope devices return an empty series. Times are IST wall-clock.</remarks>
+    [HttpGet("api/v1/sensor-data/series"), Authorize(Policies.AnyRole)]
+    public async Task<ActionResult<SensorSeriesResult>> Series([FromQuery] SensorSeriesQuery q, CancellationToken ct) => await sensors.SeriesAsync(q, Me, ct);
+
     /// <summary>One reading (404 when its device is outside the caller's scope).</summary>
     [HttpGet("api/v1/sensor-data/{id:long}"), Authorize(Policies.AnyRole)]
     [ProducesResponseType<SensorDataDto>(200)]

@@ -37,6 +37,20 @@ public class CreateGpsLocationRequest
     public int? SignalPct { get; set; }
 }
 
+/// <summary>Filters for the GPS history list (login required; limited to the caller's devices).</summary>
+public class GpsHistoryQuery : PageQuery
+{
+    /// <summary>Physical device identifier, e.g. Vayu_004.</summary>
+    public string? DeviceId { get; set; }
+    /// <summary>Earliest report time. A value without a zone is compared as typed (stored times are IST wall-clock).</summary>
+    public DateTime? From { get; set; }
+    public DateTime? To { get; set; }
+    /// <summary>true = only reports with a position fix.</summary>
+    public bool? FixOnly { get; set; }
+    /// <summary>desc (default) | asc</summary>
+    public string SortDir { get; set; } = "desc";
+}
+
 public class GpsLocationDto
 {
     public long Id { get; set; }

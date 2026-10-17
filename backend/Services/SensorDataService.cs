@@ -119,14 +119,75 @@ public class SensorDataService(
         return await Project(query).ToPagedAsync(q, ct);
     }
 
+    /// <summary>
+    /// Chart series for one device. Up to <c>Points</c> readings are returned as they are; a longer range is averaged into equal time buckets
+    /// (computed in SQL, so the browser never downloads the raw rows) and therefore always covers the WHOLE range, not just its newest readings.
+    /// </summary>
+    public async Task<SensorSeriesResult> SeriesAsync(SensorSeriesQuery q, CurrentUser caller, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(q.DeviceId)) throw ApiException.BadRequest("deviceId is required.");
+        var code = q.DeviceId.Trim();
+        var max = Math.Clamp(q.Points, 50, 1000);
+        var query = ApplyRange(db.VisibleSensorData(caller).AsNoTracking().Where(s => s.DeviceCode == code), q.From, q.To);
+
+        var stats = await query.GroupBy(_ => 1).Select(g => new { Count = g.Count(), Min = g.Min(s => s.RecordedAt), Max = g.Max(s => s.RecordedAt) }).FirstOrDefaultAsync(ct);
+        if (stats is null || stats.Count == 0) return new SensorSeriesResult { BucketMinutes = 1 };
+
+        if (stats.Count <= max)
+        {
+            var raw = await Project(query.OrderBy(s => s.RecordedAt).ThenBy(s => s.Id)).ToListAsync(ct);
+            return new SensorSeriesResult { Points = raw, BucketMinutes = 1, TotalReadings = stats.Count };
+        }
+
+        var span = (stats.Max - stats.Min).TotalMinutes;
+        var bucket = Math.Max(2, (int)Math.Ceiling(span / max));
+        var origin = stats.Min;
+        var rows = await query
+            .GroupBy(s => EF.Functions.DateDiffMinute(origin, s.RecordedAt) / bucket)
+            .Select(g => new
+            {
+                Key = g.Key, At = g.Min(s => s.RecordedAt), Aqi = g.Average(s => (double?)s.Aqi),
+                Pm10 = g.Average(s => s.Pm10), Pm25 = g.Average(s => s.Pm25), No2 = g.Average(s => s.No2Ppm), So2 = g.Average(s => s.So2Ppm),
+                Co = g.Average(s => s.CoPpm), Tvoc = g.Average(s => s.TvocPpb), Hum = g.Average(s => s.Humidity), Temp = g.Average(s => s.Temperature),
+                OTemp = g.Average(s => s.OuterTemperature), OHum = g.Average(s => s.OuterHumidity),
+            }).OrderBy(g => g.Key).ToListAsync(ct);
+
+        static decimal? R(decimal? v, int d = 2) => v is null ? null : Math.Round(v.Value, d);
+        var points = rows.Select(r =>
+        {
+            int? aqi = r.Aqi is null ? null : (int)Math.Round(r.Aqi.Value);
+            return new SensorDataDto
+            {
+                Id = r.Key, DeviceId = code, RecordedAt = DateTime.SpecifyKind(r.At, DateTimeKind.Utc),
+                DataDate = DateOnly.FromDateTime(r.At), DataTime = TimeOnly.FromDateTime(r.At), CreatedAt = DateTime.SpecifyKind(r.At, DateTimeKind.Utc),
+                Aqi = aqi, AqiStatus = aqi is null ? null : IndiaAqi.Status(aqi.Value),
+                Pm10 = R(r.Pm10), Pm25 = R(r.Pm25), No2Ppm = R(r.No2, 4), So2Ppm = R(r.So2, 4), CoPpm = R(r.Co, 4), TvocPpb = R(r.Tvoc),
+                Humidity = R(r.Hum), Temperature = R(r.Temp), OuterTemperature = R(r.OTemp), OuterHumidity = R(r.OHum),
+            };
+        }).ToList();
+        return new SensorSeriesResult { Points = points, BucketMinutes = bucket, TotalReadings = stats.Count };
+    }
+
     private async Task<string> AuthorizedDeviceCodeAsync(int deviceRecordId, CurrentUser caller, CancellationToken ct) =>
         await db.DataDevices(caller).Where(d => d.Id == deviceRecordId).Select(d => d.DeviceId).FirstOrDefaultAsync(ct)
         ?? throw ApiException.NotFound("Device not found.");
 
     private static IQueryable<ManipulatedSensorData> ApplyRange(IQueryable<ManipulatedSensorData> q, DateTime? from, DateTime? to)
     {
-        if (from is { } f) { var fu = f.ToUniversalTime(); q = q.Where(s => s.RecordedAt >= fu); }
-        if (to is { } t) { var tu = t.ToUniversalTime(); q = q.Where(s => s.RecordedAt <= tu); }
+        if (from is { } f) { var fu = AsStoredWallClock(f); q = q.Where(s => s.RecordedAt >= fu); }
+        if (to is { } t) { var tu = AsStoredWallClock(t); q = q.Where(s => s.RecordedAt <= tu); }
         return q;
     }
+
+    /// <summary>
+    /// Readings are stored as IST wall-clock labelled UTC (what the device sends). A filter time WITHOUT a zone (what the panel sends, e.g. 2026-10-18T01:37:00)
+    /// is therefore compared as typed; it must never go through the SERVER's local time zone, which shifted the filter by the host's offset (5:30 on an IST PC, 0 on the UTC server).
+    /// A time with an explicit zone is converted to UTC as before.
+    /// </summary>
+    internal static DateTime AsStoredWallClock(DateTime t) => t.Kind switch
+    {
+        DateTimeKind.Unspecified => DateTime.SpecifyKind(t, DateTimeKind.Utc),
+        DateTimeKind.Local => t.ToUniversalTime(),
+        _ => t,
+    };
 }

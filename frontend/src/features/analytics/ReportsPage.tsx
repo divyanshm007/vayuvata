@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Card, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, CircularProgress } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
+import TableViewOutlined from '@mui/icons-material/TableViewOutlined';
 import { sensorApi } from '../../api/services';
 import { AqiBadge, PageHeader, PaginationBar } from '../../components/ui';
 import { EmptyState, ErrorState, TableSkeleton, useToast } from '../../components/feedback';
 import { useDevices } from '../devices/useDevices';
-import { DeviceSelect, RangePicker, fetchSeries, useRange } from './useSeries';
-import { fmtNum, fmtWallClock, toApiDateTime } from '../../utils/format';
+import { DeviceSelect, HISTORY_PRESETS, RangePicker, useRange } from './useSeries';
+import { downloadReadingsXlsx, exportFileName, fetchReadingsForExport, EXPORT_MAX_ROWS } from '../../utils/exportExcel';
+import { fmtNum, fmtWallClock, toApiDateTime, toApiDateTimeEnd } from '../../utils/format';
 import { useAsync } from '../../utils/useAsync';
 import { errorMessage } from '../../utils/errors';
 import { MEASURES } from '../sensor-data/ReadingParts';
@@ -31,33 +33,41 @@ export default function ReportsPage() {
   const invalid = !!range.to && range.from > range.to;
 
   const s = useAsync(
-    () => sensorApi.history(device!.id, { from: toApiDateTime(range.from), to: toApiDateTime(range.to), sortDir: 'desc', page, pageSize }),
+    () => sensorApi.history(device!.id, { from: toApiDateTime(range.from), to: toApiDateTimeEnd(range.to), sortDir: 'desc', page, pageSize }),
     [device?.id, range.from, range.to, page, pageSize], !!device && !invalid,
   );
 
-  const exportCsv = async () => {
+  const runExport = async (kind: 'csv' | 'xlsx') => {
     setExporting(true);
     try {
-      const { rows, truncated } = await fetchSeries(deviceId, range);
-      const blob = new Blob([toCsv(rows)], { type: 'text/csv;charset=utf-8' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob); a.download = `vayuvata-${deviceId}-${range.from.slice(0, 10)}.csv`; a.click();
-      URL.revokeObjectURL(a.href);
-      toast(truncated ? `Exported the latest ${rows.length} readings (export is capped).` : `Exported ${rows.length} readings.`, truncated ? 'info' : 'success');
+      const { rows, truncated } = await fetchReadingsForExport({ deviceId, from: toApiDateTime(range.from), to: toApiDateTimeEnd(range.to), sortBy: 'recordedAt', sortDir: 'desc' });
+      if (rows.length === 0) { toast('There are no readings in this period to export.', 'info'); return; }
+      const name = exportFileName([deviceId, range.from.slice(0, 10)], kind);
+      if (kind === 'xlsx') await downloadReadingsXlsx(rows, name);
+      else {
+        const blob = new Blob([toCsv(rows)], { type: 'text/csv;charset=utf-8' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob); a.download = name; a.click();
+        URL.revokeObjectURL(a.href);
+      }
+      toast(truncated ? `Exported the latest ${rows.length} readings (export is capped at ${EXPORT_MAX_ROWS}).` : `Exported ${rows.length} readings.`, truncated ? 'info' : 'success');
     } catch (e) { toast(errorMessage(e), 'error'); } finally { setExporting(false); }
   };
 
   return (
     <>
       <PageHeader title="Historical Reports" subtitle="Browse a device's reading history for any period" crumbs={[{ label: 'Home', to: '/' }, { label: 'Historical Reports' }]}
-        actions={<Button variant="outlined" startIcon={exporting ? <CircularProgress size={16} /> : <DownloadIcon />} disabled={!device || exporting || invalid} onClick={exportCsv}>Export CSV</Button>} />
+        actions={<Stack direction="row" spacing={1}>
+          <Button variant="contained" startIcon={exporting ? <CircularProgress size={16} color="inherit" /> : <TableViewOutlined />} disabled={!device || exporting || invalid} onClick={() => runExport('xlsx')}>Export Excel</Button>
+          <Button variant="outlined" startIcon={<DownloadIcon />} disabled={!device || exporting || invalid} onClick={() => runExport('csv')}>Export CSV</Button>
+        </Stack>} />
       {!!dev.error && <ErrorState error={dev.error} onRetry={dev.reload} />}
       {!dev.loading && !dev.error && dev.devices.length === 0 && <Card><EmptyState title="No devices available" /></Card>}
       {dev.devices.length > 0 && (
         <Card>
           <Stack direction={{ xs: 'column', lg: 'row' }} spacing={2} justifyContent="space-between" alignItems={{ lg: 'center' }} sx={{ p: 2 }}>
             <DeviceSelect devices={dev.devices} value={deviceId} onChange={(v) => { setDeviceId(v); setPage(1); }} />
-            <RangePicker value={range} onChange={(r) => { setRange(r); setPage(1); }} />
+            <RangePicker value={range} onChange={(r) => { setRange(r); setPage(1); }} presets={HISTORY_PRESETS} />
           </Stack>
           {invalid && <Alert severity="warning" sx={{ mx: 2, mb: 2 }}>“To” must be after “From”.</Alert>}
           <TableContainer>

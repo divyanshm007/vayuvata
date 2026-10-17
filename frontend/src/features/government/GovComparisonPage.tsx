@@ -3,14 +3,16 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from 'react-leaflet';
 import {
-  Alert, Box, Button, Card, Chip, CircularProgress, MenuItem, Select, Stack, Tab, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow, Tabs, Typography,
+  Alert, Box, Button, Card, Chip, CircularProgress, MenuItem, Select, Stack, Table, TableBody, TableCell, TableContainer,
+  TableHead, TableRow, Typography,
 } from '@mui/material';
 import Sync from '@mui/icons-material/Sync';
 import { PageHeader } from '../../components/ui';
 import { ErrorState } from '../../components/feedback';
 import { governmentApi } from '../../api/services';
 import { useAsync } from '../../utils/useAsync';
+import { useAuth } from '../auth/AuthContext';
+import { MAP_ATTRIBUTION, MAP_MAX_ZOOM, MAP_TILE_URL } from '../../config/mapTiles';
 import { fmtNum, fmtWallClock } from '../../utils/format';
 import { toAppError } from '../../utils/errors';
 import type { GovDeviceComparison, GovStationDto } from '../../types/api';
@@ -48,7 +50,7 @@ function GovMap({ cmp, mode }: { cmp: GovDeviceComparison; mode: 'device' | 'gov
     <Box sx={{ height: 420, borderRadius: 2, overflow: 'hidden', border: '1px solid', borderColor: 'divider' }}>
       <style>{PIN_CSS}</style>
       <MapContainer center={points[0]} zoom={13} style={{ height: '100%', width: '100%' }} scrollWheelZoom>
-        <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+        <TileLayer url={MAP_TILE_URL} maxZoom={MAP_MAX_ZOOM} attribution={MAP_ATTRIBUTION} />
         <Fit points={points} />
         {dev && (
           <Marker position={dev} icon={DEVICE_ICON}>
@@ -80,38 +82,43 @@ const Stat = ({ label, value, unit }: { label: string; value: string; unit?: str
   </Box>
 );
 
-function DeviceTab({ cmp }: { cmp: GovDeviceComparison }) {
+function DevicePanel({ cmp }: { cmp: GovDeviceComparison }) {
   const d = cmp.device;
+  const rows: Array<[string, string, string]> = [
+    ['PM2.5', fmtNum(d.pm25), 'µg/m³'], ['PM10', fmtNum(d.pm10), 'µg/m³'], ['AQI (calculated from PM)', `${fmtNum(d.aqi, 0)}${d.aqiStatus ? ` · ${d.aqiStatus}` : ''}`, ''],
+    ['NO₂', fmtNum(d.no2Ppm, 3), 'device raw'], ['SO₂', fmtNum(d.so2Ppm, 3), 'device raw'], ['CO', fmtNum(d.coPpm, 2), 'ppm'],
+    ['TVOC', fmtNum(d.tvocPpb, 0), 'ppb'], ['Temperature', fmtNum(d.temperature), '°C'], ['Humidity', fmtNum(d.humidity), '%'],
+    ['Outer temperature', fmtNum(d.outerTemperature), '°C'], ['Outer humidity', fmtNum(d.outerHumidity), '%'],
+  ];
   return (
     <Stack spacing={2}>
       <Card sx={{ p: 2 }}>
-        <Typography fontWeight={700} sx={{ mb: 1 }}>{d.deviceId} <Typography component="span" color="text.secondary">{d.deviceName}</Typography></Typography>
+        <Typography fontWeight={700}>{d.deviceId} <Typography component="span" color="text.secondary">{d.deviceName}</Typography></Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>VayuVata device · our sensors</Typography>
         <Stack direction="row" flexWrap="wrap" gap={3}>
-          <Stat label="Location" value={d.location ? `${d.location.latitude.toFixed(5)}, ${d.location.longitude.toFixed(5)}` : '—'} />
-          <Stat label="Position reported (IST)" value={d.locationRecordedAt ? fmtWallClock(d.locationRecordedAt, true) : '—'} unit={d.locationSource ?? ''} />
+          <Stat label="Device position" value={d.location ? `${d.location.latitude.toFixed(5)}, ${d.location.longitude.toFixed(5)}` : '—'} />
+          <Stat label="Distance to station" value={fmtNum(cmp.government.station?.distanceKm)} unit="km" />
           <Stat label="Latest reading (IST)" value={d.latestReadingAt ? fmtWallClock(d.latestReadingAt, true) : '—'} />
-          <Stat label="Latest AQI" value={fmtNum(d.latestAqi, 0)} unit={d.latestAqiStatus ?? ''} />
+          <Stat label="Position reported (IST)" value={d.locationRecordedAt ? fmtWallClock(d.locationRecordedAt, true) : '—'} unit={d.locationSource ?? ''} />
         </Stack>
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
-          {d.isLastKnown
-            ? `The device is offline: these are its last known values from ${fmtWallClock(d.latestReadingAt, true)}. They are shown for reference and are not compared.`
-            : `Compared values are the average of ${d.windowSamples} reading(s) in the hour ending at the government observation${d.windowFrom && d.windowTo ? ` (${fmtWallClock(d.windowFrom)} to ${fmtWallClock(d.windowTo)})` : ''}.`}
+        <TableContainer sx={{ mt: 2 }}>
+          <Table size="small" aria-label="VayuVata readings">
+            <TableHead><TableRow><TableCell>Parameter</TableCell><TableCell align="right">Value</TableCell><TableCell>Unit</TableCell></TableRow></TableHead>
+            <TableBody>
+              {rows.map(([k, v, u]) => <TableRow key={k}><TableCell>{k}</TableCell><TableCell align="right">{v}</TableCell><TableCell>{u}</TableCell></TableRow>)}
+            </TableBody>
+          </Table>
+        </TableContainer>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+          Latest reading from the device ({fmtWallClock(d.latestReadingAt, true)} IST). It is compared as it is with the government's latest observation; the two times are shown above.
         </Typography>
-        <Stack direction="row" flexWrap="wrap" gap={3} sx={{ mt: 1.5 }}>
-          <Stat label="PM2.5" value={fmtNum(d.pm25)} unit="µg/m³" /><Stat label="PM10" value={fmtNum(d.pm10)} unit="µg/m³" />
-          <Stat label="AQI (from PM)" value={fmtNum(d.aqi, 0)} unit={d.aqiStatus ?? ''} />
-          <Stat label="NO₂" value={fmtNum(d.no2Ppm, 3)} /><Stat label="SO₂" value={fmtNum(d.so2Ppm, 3)} /><Stat label="CO" value={fmtNum(d.coPpm, 2)} />
-          <Stat label="TVOC" value={fmtNum(d.tvocPpb, 0)} unit="ppb" />
-          <Stat label="Temperature" value={fmtNum(d.temperature)} unit="°C" /><Stat label="Humidity" value={fmtNum(d.humidity)} unit="%" />
-          <Stat label="Outer temperature" value={fmtNum(d.outerTemperature)} unit="°C" /><Stat label="Outer humidity" value={fmtNum(d.outerHumidity)} unit="%" />
-        </Stack>
       </Card>
       <GovMap cmp={cmp} mode="device" />
     </Stack>
   );
 }
 
-function GovernmentTab({ cmp }: { cmp: GovDeviceComparison }) {
+function GovernmentPanel({ cmp }: { cmp: GovDeviceComparison }) {
   const s = cmp.government.station;
   if (!s) return <Alert severity="warning">{cmp.statusMessage}</Alert>;
   return (
@@ -141,12 +148,6 @@ function GovernmentTab({ cmp }: { cmp: GovDeviceComparison }) {
         </Typography>
       </Card>
       <GovMap cmp={cmp} mode="government" />
-      {cmp.nearbyStations.length > 0 && (
-        <Card sx={{ p: 2 }}>
-          <Typography fontWeight={700} sx={{ mb: 1 }}>Other stations nearby</Typography>
-          <NearbyTable list={cmp.nearbyStations.filter((n) => n.id !== s.id)} />
-        </Card>
-      )}
     </Stack>
   );
 }
@@ -197,10 +198,10 @@ function CompareTable({ cmp }: { cmp: GovDeviceComparison }) {
 }
 
 export default function GovComparisonPage() {
+  const { role } = useAuth();
   const status = useAsync(() => governmentApi.status(), []);
   const cmps = useAsync(() => governmentApi.comparison(25), []);
   const [deviceId, setDeviceId] = useState<string>('');
-  const [tab, setTab] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -227,9 +228,9 @@ export default function GovComparisonPage() {
     <>
       <PageHeader
         title="Government Comparison"
-        subtitle="Each VayuVata device against the nearest CPCB / state monitoring station (data.gov.in). SuperAdmin only."
+        subtitle="Each VayuVata device against the nearest CPCB / state monitoring station (data.gov.in). Shows your assigned devices."
         crumbs={[{ label: 'Home', to: '/' }, { label: 'Gov Comparison' }]}
-        actions={<Button variant="contained" startIcon={syncing ? <CircularProgress size={16} color="inherit" /> : <Sync />} onClick={sync} disabled={syncing}>Sync now</Button>}
+        actions={role === 'SuperAdmin' ? <Button variant="contained" startIcon={syncing ? <CircularProgress size={16} color="inherit" /> : <Sync />} onClick={sync} disabled={syncing}>Sync now</Button> : undefined}
       />
       {syncMsg && <Alert severity={syncMsg.ok ? 'success' : 'error'} sx={{ mb: 2 }} onClose={() => setSyncMsg(null)}>{syncMsg.text}</Alert>}
       {st && (
@@ -238,7 +239,7 @@ export default function GovComparisonPage() {
           <Chip size="small" label={`${st.mappedDevices} device(s) matched`} />
           <Chip size="small" color={st.lastSyncStatus === 'ok' ? 'success' : 'warning'} label={`Last sync: ${st.lastSyncStatus ?? 'never'}${st.lastSyncAt ? ` · ${new Date(st.lastSyncAt).toLocaleString()}` : ''}`} />
           <Chip size="small" label={`Newest official reading (IST): ${st.latestObservedAt ? fmtWallClock(st.latestObservedAt) : '—'}`} />
-          {!st.apiKeyConfigured && <Chip size="small" color="error" label="API key not configured" />}
+          {role === 'SuperAdmin' && !st.apiKeyConfigured && <Chip size="small" color="error" label="API key not configured" />}
         </Stack>
       )}
       {cmps.error ? <ErrorState error={cmps.error} onRetry={cmps.reload} /> : cmps.loading && !cmps.data ? <CircularProgress aria-label="Loading" /> : (
@@ -250,18 +251,28 @@ export default function GovComparisonPage() {
           )}
           {cmp && (
             <>
-              <Alert severity={cmp.status === 'ok' ? 'success' : cmp.status === 'stale' || cmp.status === 'device_offline' ? 'warning' : 'info'}>
+              <Alert severity={cmp.status === 'ok' ? 'success' : cmp.status === 'stale' ? 'warning' : 'info'}>
                 {cmp.statusMessage}
                 {cmp.governmentAgeMinutes != null && ` Government observation is ${Math.round(cmp.governmentAgeMinutes)} min old.`}
-                {cmp.government.station && cmp.device.latestReadingAt && cmp.device.windowSamples === 0 &&
-                  ` The device's latest reading is from ${fmtWallClock(cmp.device.latestReadingAt)}.`}
               </Alert>
               {stale && <Alert severity="warning">The official data is older than 3 hours; do not treat it as live.</Alert>}
               <CompareTable cmp={cmp} />
-              <Tabs value={tab} onChange={(_, v) => setTab(v)} aria-label="Data source">
-                <Tab label="VayuVata (our device)" /><Tab label="Government (CPCB station)" />
-              </Tabs>
-              {tab === 0 ? <DeviceTab cmp={cmp} /> : <GovernmentTab cmp={cmp} />}
+              <Box sx={{ display: 'grid', gap: 2, gridTemplateColumns: { xs: 'minmax(0, 1fr)', lg: 'repeat(2, minmax(0, 1fr))' }, alignItems: 'start' }}>
+                <Box>
+                  <Typography fontWeight={800} sx={{ mb: 1, color: 'primary.main' }}>VayuVata (our device)</Typography>
+                  <DevicePanel cmp={cmp} />
+                </Box>
+                <Box>
+                  <Typography fontWeight={800} sx={{ mb: 1, color: '#1D4ED8' }}>Government (CPCB station)</Typography>
+                  <GovernmentPanel cmp={cmp} />
+                </Box>
+              </Box>
+              {cmp.nearbyStations.length > 1 && (
+                <Card sx={{ p: 2 }}>
+                  <Typography fontWeight={700} sx={{ mb: 1 }}>Other government stations nearby</Typography>
+                  <NearbyTable list={cmp.nearbyStations.filter((n) => n.id !== cmp.government.station?.id)} />
+                </Card>
+              )}
             </>
           )}
           {list.length === 0 && <Alert severity="info">No active devices.</Alert>}

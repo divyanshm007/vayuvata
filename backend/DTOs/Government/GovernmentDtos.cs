@@ -81,6 +81,8 @@ public class DeviceComparisonDto
     public string StatusMessage { get; set; } = "";
     /// <summary>Age of the government observation in minutes (IST now minus ObservedAt).</summary>
     public int? GovernmentAgeMinutes { get; set; }
+    /// <summary>Device latest reading time minus government observation time, in minutes (positive = the device reading is newer).</summary>
+    public int? TimeGapMinutes { get; set; }
     public List<GovernmentStationDto> NearbyStations { get; set; } = [];
 }
 

@@ -4,7 +4,7 @@ import { PageHeader, StatCard } from '../../components/ui';
 import { EmptyState, ErrorState } from '../../components/feedback';
 import { useDevices } from '../devices/useDevices';
 import { useLatest } from '../sensor-data/useLatest';
-import { DeviceSelect, RangePicker, useRange, useSeries, MAX_PAGES, MAX_POINTS_PER_PAGE } from './useSeries';
+import { DeviceSelect, RangePicker, useRange, useSeries } from './useSeries';
 import { AqiLegend, AqiTrendChart, ChartCard, DeviceAqiBars, PmChart, TempHumChart, toSeries } from './charts';
 import { fmtNum } from '../../utils/format';
 import { aqiCategory } from '../../utils/aqi';
@@ -43,7 +43,7 @@ export default function AnalyticsPage() {
           </Card>
           {series.loading && <LinearProgress sx={{ mb: 2 }} />}
           {!!series.error && <ErrorState error={series.error} onRetry={series.reload} />}
-          {series.data?.truncated && <Alert severity="info" sx={{ mb: 2 }}>Showing the latest {MAX_PAGES * MAX_POINTS_PER_PAGE} readings in this range. Narrow the range for more detail.</Alert>}
+          {!!series.data && series.data.bucketMinutes > 1 && <Alert severity="info" sx={{ mb: 2 }}>The whole range is shown: each point is the average of {series.data.bucketMinutes} minutes ({series.data.totalReadings} readings). Narrow the range for more detail.</Alert>}
           {!series.error && (
             <Grid container spacing={2}>
               <Grid item xs={6} md={3}><StatCard label="Readings" value={data.length} icon={Numbers} accent="#0ea5e9" loading={series.loading} /></Grid>

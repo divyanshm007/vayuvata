@@ -16,14 +16,14 @@ const reading = (i: number): SensorDataDto => {
   };
 };
 
-const mount = (n: number, truncated = false) =>
-  render(<ThemeProvider theme={theme}><InteractiveTrendChart data={toSeries(Array.from({ length: n }, (_, i) => reading(i)))} truncated={truncated} /></ThemeProvider>);
+const mount = (n: number, bucketMinutes = 1) =>
+  render(<ThemeProvider theme={theme}><InteractiveTrendChart data={toSeries(Array.from({ length: n }, (_, i) => reading(i)))} bucketMinutes={bucketMinutes} /></ThemeProvider>);
 
 describe('InteractiveTrendChart', () => {
   it('starts on the latest readings and shows a fixed-size window', () => {
-    mount(200, true);
+    mount(200, 15);
     expect(screen.getByText(/Showing 96 of 200 loaded readings/)).toBeInTheDocument();
-    expect(screen.getByText(/the latest 300 in this range/)).toBeInTheDocument();
+    expect(screen.getByText(/each point is the average of 15 minutes, so the whole range is shown/)).toBeInTheDocument();
     expect(screen.getByText(/Latest in view/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /move to later readings/i })).toBeDisabled();
   });

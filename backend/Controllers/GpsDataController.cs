@@ -45,6 +45,13 @@ public class GpsDataController(GpsLocationService gps) : ControllerBase
     [ProducesResponseType<List<GpsLocationDto>>(200)]
     public async Task<ActionResult<List<GpsLocationDto>>> List(CancellationToken ct) => await gps.AllAsync(ct);
 
+    /// <summary>GPS history (positions over time) of the devices the caller may see: filter by device, from/to and fix, paged. Login required.</summary>
+    /// <remarks>SuperAdmin: all devices. Admin: devices assigned to them or to their Users. User: their own devices. Times are IST.</remarks>
+    [HttpGet("api/v1/gps-data/history"), Authorize(Policies.AnyRole)]
+    [ProducesResponseType<PagedResult<GpsLocationDto>>(200)]
+    public async Task<ActionResult<PagedResult<GpsLocationDto>>> History([FromQuery] GpsHistoryQuery q, CancellationToken ct) =>
+        await gps.HistoryAsync(q, CurrentUser.From(User), ct);
+
     /// <summary>Current position of a device: enter the deviceId; it must exist and be active, then its latest GPS report is returned. No login needed.</summary>
     /// <remarks>404 = unknown device, or no GPS data yet; 409 <c>device_inactive</c> = the device exists but is not active.</remarks>
     /// <param name="deviceId">The device's id, e.g. Vayu_004.</param>

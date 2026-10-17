@@ -21,7 +21,7 @@ public class DeviceAssignmentService(
         if (caller.IsUser) throw ApiException.Forbidden();
         await assignValidator.ValidateAndThrowAsync(req, ct);
 
-        // Device must be inside the caller's scope (Admin: unassigned or already assigned to one of their Users).
+        // Device must be inside the caller's scope (Admin: assigned to themselves or to one of their Users).
         var device = await db.VisibleDevices(caller).FirstOrDefaultAsync(d => d.Id == deviceRecordId, ct)
                      ?? throw ApiException.NotFound("Device not found.");
         if (!device.IsActive) throw ApiException.Conflict("Device is inactive.", "device_inactive");
@@ -30,7 +30,8 @@ public class DeviceAssignmentService(
                      ?? throw ApiException.NotFound("Target user not found.");
         if (caller.IsAdmin && (target.ManagerId != caller.Id || target.Role != Roles.User))
             throw ApiException.Forbidden("The target user is outside your scope.");
-        if (target.Role != Roles.User) throw ApiException.BadRequest("Devices can only be assigned to regular Users.");
+        if (target.Role != Roles.User && target.Role != Roles.Admin)
+            throw ApiException.BadRequest("Devices can only be assigned to Users or Admins.");
         if (!target.IsActive) throw ApiException.Conflict("Target user is inactive.", "user_inactive");
 
         await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -65,13 +66,15 @@ public class DeviceAssignmentService(
 
     public async Task<DeviceDto> UnassignAsync(int deviceRecordId, UnassignDeviceRequest? req, CurrentUser caller, CancellationToken ct)
     {
-        if (caller.IsUser) throw ApiException.Forbidden();
+        // Taking a device out of circulation is a SuperAdmin decision. An Admin passes a device on to one of their Users (assign) but never releases it.
+        if (!caller.IsSuperAdmin) throw ApiException.Forbidden("Only the SuperAdmin can unassign a device.");
         var device = await db.VisibleDevices(caller).FirstOrDefaultAsync(d => d.Id == deviceRecordId, ct)
                      ?? throw ApiException.NotFound("Device not found.");
         var current = await db.DeviceAssignments.Include(a => a.User)
                           .FirstOrDefaultAsync(a => a.DeviceRecordId == device.Id && a.IsActive, ct)
                       ?? throw ApiException.Conflict("Device is not currently assigned.", "not_assigned");
-        if (caller.IsAdmin && current.User.ManagerId != caller.Id) throw ApiException.NotFound("Device not found.");
+        // An Admin may release devices of their own Users and devices assigned to themselves.
+        if (caller.IsAdmin && current.User.ManagerId != caller.Id && current.UserId != caller.Id) throw ApiException.NotFound("Device not found.");
 
         current.IsActive = false;
         current.UnassignedAt = DateTime.UtcNow;
@@ -90,7 +93,7 @@ public class DeviceAssignmentService(
             throw ApiException.NotFound("Device not found.");
 
         var q = db.DeviceAssignments.AsNoTracking().Where(a => a.DeviceRecordId == deviceRecordId);
-        if (caller.IsAdmin) q = q.Where(a => a.User.ManagerId == caller.Id);
+        if (caller.IsAdmin) q = q.Where(a => a.User.ManagerId == caller.Id || a.UserId == caller.Id);
         return await q.OrderByDescending(a => a.AssignedAt).ThenByDescending(a => a.Id)
             .Select(a => new AssignmentDto
             {

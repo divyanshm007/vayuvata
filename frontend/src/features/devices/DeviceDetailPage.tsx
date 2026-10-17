@@ -5,7 +5,7 @@ import { devicesApi, sensorApi } from '../../api/services';
 import { ActiveChip, AqiBadge, AssignedChip, PageHeader, PaginationBar, ReportingChip } from '../../components/ui';
 import { EmptyState, ErrorState, TableSkeleton } from '../../components/feedback';
 import { useAsync } from '../../utils/useAsync';
-import { fmtNum, fmtUtc, fmtWallClock, isRecentlyReporting, toApiDateTime } from '../../utils/format';
+import { fmtNum, fmtUtc, fmtWallClock, isRecentlyReporting, toApiDateTime, toApiDateTimeEnd } from '../../utils/format';
 import { useAuth } from '../auth/AuthContext';
 import { AqiLegend, AqiTrendChart, ChartCard, PmChart, TempHumChart, toSeries } from '../analytics/charts';
 import { RangePicker, useRange, useSeries } from '../analytics/useSeries';
@@ -32,7 +32,7 @@ export default function DeviceDetailPage() {
   const [rPage, setRPage] = useState(1);
   const [rSize, setRSize] = useState(10);
   const readings = useAsync(
-    () => sensorApi.history(id, { from: toApiDateTime(range.from), to: toApiDateTime(range.to), sortDir: 'desc', page: rPage, pageSize: rSize }),
+    () => sensorApi.history(id, { from: toApiDateTime(range.from), to: toApiDateTimeEnd(range.to), sortDir: 'desc', page: rPage, pageSize: rSize }),
     [id, range.from, range.to, rPage, rSize], !!dev.data,
   );
 
@@ -73,7 +73,7 @@ export default function DeviceDetailPage() {
           <Grid item xs={12}>
             <Card sx={{ p: 2 }}><RangePicker value={range} onChange={(v) => { setRange(v); setRPage(1); }} /></Card>
           </Grid>
-          {series.data?.truncated && <Grid item xs={12}><Alert severity="info">Charts show the latest 300 readings in this range.</Alert></Grid>}
+          {!!series.data && series.data.bucketMinutes > 1 && <Grid item xs={12}><Alert severity="info">The whole range is shown: each point is the average of {series.data.bucketMinutes} minutes ({series.data.totalReadings} readings).</Alert></Grid>}
           <Grid item xs={12}><ChartCard title="AQI trend" subtitle="Device local time (IST)" action={<AqiLegend />} height={280}><AqiTrendChart data={data} /></ChartCard></Grid>
           <Grid item xs={12} lg={6}><ChartCard title="PM2.5 vs PM10"><PmChart data={data} /></ChartCard></Grid>
           <Grid item xs={12} lg={6}><ChartCard title="Temperature & humidity"><TempHumChart data={data} /></ChartCard></Grid>

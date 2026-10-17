@@ -84,8 +84,8 @@ describe('unified login and role-based navigation', () => {
 
   it.each([
     ['SuperAdmin', ['Admin Management', 'Device Assignments', 'Historical Reports'], []],
-    ['Admin', ['My Users', 'Historical Reports'], ['Admin Management', 'Device Assignments']],
-    ['User', ['My Devices', 'Latest Sensor Readings', 'Reading History'], ['My Users', 'Admin Management', 'Historical Reports', 'System Health', 'Device Assignments']],
+    ['Admin', ['My Users', 'Historical Reports', 'Gov Comparison'], ['Admin Management', 'Device Assignments']],
+    ['User', ['My Devices', 'Latest Sensor Readings', 'Reading History', 'Historical Reports', 'Gov Comparison'], ['My Users', 'Admin Management', 'System Health', 'Device Assignments']],
   ] as const)('%s sees only their own navigation (role taken from /auth/me)', async (role, shown, hidden) => {
     renderApp('/login');
     await signIn(role);

@@ -4,6 +4,7 @@ import 'leaflet/dist/leaflet.css';
 import { MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet';
 import MarkerClusterGroup from 'react-leaflet-cluster';
 import { Box, GlobalStyles } from '@mui/material';
+import { MAP_ATTRIBUTION, MAP_MAX_ZOOM, MAP_TILE_URL } from '../../../config/mapTiles';
 import type { DeviceLocation } from '../types';
 
 /** Placeholder view (India) used only until the first markers arrive. */
@@ -125,10 +126,7 @@ export function DeviceMap({ locations, selectedId, focus, fitToken, onSelect, re
     <Box sx={{ position: 'relative', height: '100%', width: '100%', borderRadius: '14px', overflow: 'hidden' }}>
       <GlobalStyles styles={PIN_CSS} />
       <MapContainer center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} minZoom={2} scrollWheelZoom style={{ height: '100%', width: '100%' }} worldCopyJump>
-        <TileLayer
-          url="https://tile.openstreetmap.org/{z}/{x}/{y}.png" maxZoom={19}
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a> contributors'
-        />
+        <TileLayer url={MAP_TILE_URL} maxZoom={MAP_MAX_ZOOM} attribution={MAP_ATTRIBUTION} />
         <CameraController markers={markers} focus={focus} fitToken={fitToken} animate={animate} markerRefs={markerRefs} clusterRef={clusterRef} onReady={onMapReady} />
         <MarkerClusterGroup ref={clusterRef} chunkedLoading maxClusterRadius={46} showCoverageOnHover={false} spiderfyOnMaxZoom>
           {markers.map((m) => (

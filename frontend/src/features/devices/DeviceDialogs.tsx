@@ -1,3 +1,4 @@
+import { useAuth } from '../auth/AuthContext';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -173,7 +174,7 @@ export function EditDeviceDialog({ device, onClose, onSaved }: { device: DeviceD
   );
 }
 
-/** Assign (or reassign) a device. Candidate Users come from GET /users?role=User (already scoped by the backend). */
+/** Assign (or reassign) a device. Candidates come from GET /users (scoped by the backend): Users, plus Admins when the caller is a SuperAdmin. */
 export function AssignDeviceDialog({ device, onClose, onDone }: { device: DeviceDto | null; onClose: () => void; onDone: (d: DeviceDto) => void }) {
   const toast = useToast();
   const [search, setSearch] = useState('');
@@ -181,7 +182,12 @@ export function AssignDeviceDialog({ device, onClose, onDone }: { device: Device
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const users = useAsync(() => usersApi.list({ role: 'User', isActive: true, search: search || undefined, pageSize: 20, includeTotal: false }), [search], !!device);
+  const { role } = useAuth();
+  const users = useAsync(async () => {
+    const q = (r: 'User' | 'Admin') => usersApi.list({ role: r, isActive: true, search: search || undefined, pageSize: 20, includeTotal: false });
+    const [u, a] = await Promise.all([q('User'), role === 'SuperAdmin' ? q('Admin') : Promise.resolve(null)]);
+    return [...(a?.items ?? []), ...u.items];
+  }, [search, role], !!device);
 
   const submit = async () => {
     if (!device || !selected) return;
@@ -199,10 +205,10 @@ export function AssignDeviceDialog({ device, onClose, onDone }: { device: Device
           {device?.assignedUserId && <Alert severity="info">Currently assigned to <b>{device.assignedUserName}</b>. Reassigning ends that assignment; history is kept.</Alert>}
           {err && <Alert severity="error">{err}</Alert>}
           <Autocomplete
-            options={users.data?.items ?? []} loading={users.loading} value={selected} onChange={(_, v) => setSelected(v)}
-            getOptionLabel={(u) => `${u.name} (${u.email})`} isOptionEqualToValue={(a, b) => a.id === b.id}
+            options={users.data ?? []} groupBy={(u) => (u.role === 'Admin' ? 'Admins' : 'Users')} loading={users.loading} value={selected} onChange={(_, v) => setSelected(v)}
+            getOptionLabel={(u) => `${u.name} (${u.email})${u.role === 'Admin' ? ' · Admin' : ''}`} isOptionEqualToValue={(a, b) => a.id === b.id}
             filterOptions={(o) => o} onInputChange={(_, v, reason) => { if (reason === 'input') setSearch(v); }}
-            renderInput={(p) => <TextField {...p} label="User" placeholder="Search by name or email" />}
+            renderInput={(p) => <TextField {...p} label={role === 'SuperAdmin' ? 'User or Admin' : 'User'} placeholder="Search by name or email" />}
           />
           <TextField label="Notes (optional)" value={notes} onChange={(e) => setNotes(e.target.value)} inputProps={{ maxLength: 500 }} />
         </Stack>

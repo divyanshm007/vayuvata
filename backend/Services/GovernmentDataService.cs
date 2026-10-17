@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using VayuVata.Authorization;
 using VayuVata.Data;
 using VayuVata.DTOs.Government;
 using VayuVata.Helpers;
@@ -285,8 +286,10 @@ public class GovernmentDataService(VayuVataDbContext db, IHttpClientFactory http
         return all.Where(r => r.ObservedAt == newest).ToList();
     }
 
-    public async Task<DeviceComparisonDto> CompareAsync(string deviceCode, double nearbyRadiusKm, CancellationToken ct)
+    public async Task<DeviceComparisonDto> CompareAsync(string deviceCode, double nearbyRadiusKm, CurrentUser caller, CancellationToken ct)
     {
+        // Same visibility rule as sensor data: SuperAdmin all; Admin their own and their Users' devices; User their own. Anything else is a 404.
+        if (!await db.DataDevices(caller).AnyAsync(d => d.DeviceId == deviceCode, ct)) throw ApiException.NotFound("Device not found.");
         var device = await db.Devices.AsNoTracking().FirstOrDefaultAsync(d => d.DeviceId == deviceCode, ct) ?? throw ApiException.NotFound("Device not found.");
         var dto = new DeviceComparisonDto { Device = new DeviceSideDto { DeviceId = device.DeviceId, DeviceName = device.DeviceName } };
 
@@ -322,31 +325,21 @@ public class GovernmentDataService(VayuVataDbContext db, IHttpClientFactory http
                 dto.Status = dto.GovernmentAgeMinutes > _o.StaleAfterHours * 60 ? "stale" : "ok";
                 dto.StatusMessage = dto.Status == "stale" ? $"The government reading is {dto.GovernmentAgeMinutes / 60} h old." : "Government data is current.";
 
-                // device side: average of the readings in the hour that ends at the government observation time (both IST wall-clock)
-                var to = observed.Value; var from = to.AddMinutes(-_o.ComparisonWindowMinutes);
-                var win = await db.ManipulatedSensorData.AsNoTracking().Where(s => s.DeviceCode == deviceCode && s.RecordedAt > from && s.RecordedAt <= to).ToListAsync(ct);
-                dto.Device.WindowFrom = from; dto.Device.WindowTo = to; dto.Device.WindowSamples = win.Count;
-                if (win.Count == 0 && latestRow is not null && latestRow.RecordedAt <= to && to - latestRow.RecordedAt <= TimeSpan.FromHours(_o.StaleAfterHours))
+                // Compare the LATEST reading of each side as they are: the device's newest reading with the station's newest observation.
+                // The two times are shown (and their gap) so nothing is presented as simultaneous when it is not.
+                if (latestRow is null) { dto.StatusMessage = "The device has no readings yet."; }
+                else
                 {
-                    win = [latestRow];
-                    dto.StatusMessage += " No device readings exist inside the government hour, so the device's latest reading (within " + _o.StaleAfterHours + " h) is used instead.";
+                    var d = dto.Device; var r = latestRow;
+                    d.WindowSamples = 1; d.IsLastKnown = false;
+                    d.Pm25 = r.Pm25; d.Pm10 = r.Pm10; d.No2Ppm = r.No2Ppm; d.So2Ppm = r.So2Ppm; d.CoPpm = r.CoPpm; d.TvocPpb = r.TvocPpb;
+                    d.Temperature = r.Temperature; d.Humidity = r.Humidity; d.OuterTemperature = r.OuterTemperature; d.OuterHumidity = r.OuterHumidity;
+                    d.Aqi = IndiaAqi.Calculate(d.Pm25, d.Pm10); d.AqiStatus = d.Aqi is null ? null : IndiaAqi.Status(d.Aqi.Value);
+                    dto.TimeGapMinutes = (int)(r.RecordedAt - observed.Value).TotalMinutes;
+                    dto.Rows = BuildRows(dto);
+                    var gap = Math.Abs(dto.TimeGapMinutes.Value);
+                    dto.StatusMessage = $"Latest of each side: device {r.RecordedAt:dd MMM HH:mm}, government {observed.Value:dd MMM HH:mm} IST ({gap / 60} h {gap % 60} min apart, device is {(dto.TimeGapMinutes >= 0 ? "newer" : "older")}).";
                 }
-                else if (win.Count == 0)
-                {
-                    if (latestRow is not null) { win = [latestRow]; dto.Device.IsLastKnown = true; }   // show the last known values, labelled; never compared
-                    dto.Status = "device_offline";
-                    dto.StatusMessage = latestRow is null ? "The device has no readings yet."
-                        : $"The device has not reported near the government observation time (its latest reading is from {latestRow.RecordedAt:dd MMM yyyy HH:mm} IST), so there is nothing to compare.";
-                }
-                decimal? Avg(Func<ManipulatedSensorData, decimal?> f) { var v = win.Select(f).Where(x => x != null).Select(x => x!.Value).ToList(); return v.Count == 0 ? null : Math.Round(v.Average(), 2); }
-                dto.Device.Pm25 = Avg(s => s.Pm25); dto.Device.Pm10 = Avg(s => s.Pm10); dto.Device.No2Ppm = Avg(s => s.No2Ppm); dto.Device.So2Ppm = Avg(s => s.So2Ppm);
-                dto.Device.CoPpm = Avg(s => s.CoPpm); dto.Device.TvocPpb = Avg(s => s.TvocPpb); dto.Device.Temperature = Avg(s => s.Temperature);
-                dto.Device.Humidity = Avg(s => s.Humidity); dto.Device.OuterTemperature = Avg(s => s.OuterTemperature); dto.Device.OuterHumidity = Avg(s => s.OuterHumidity);
-                dto.Device.Aqi = IndiaAqi.Calculate(dto.Device.Pm25, dto.Device.Pm10);
-                dto.Device.AqiStatus = dto.Device.Aqi is null ? null : IndiaAqi.Status(dto.Device.Aqi.Value);
-                dto.Rows = BuildRows(dto);
-                if (dto.Device.IsLastKnown)
-                    foreach (var r in dto.Rows) { r.Comparable = false; r.Difference = null; r.PercentDifference = null; r.Note = "Device offline: last known value, not compared."; }
             }
         }
 
@@ -390,11 +383,11 @@ public class GovernmentDataService(VayuVataDbContext db, IHttpClientFactory http
         ];
     }
 
-    public async Task<List<DeviceComparisonDto>> CompareAllAsync(double nearbyRadiusKm, CancellationToken ct)
+    public async Task<List<DeviceComparisonDto>> CompareAllAsync(double nearbyRadiusKm, CurrentUser caller, CancellationToken ct)
     {
-        var codes = await db.Devices.AsNoTracking().Where(d => d.IsActive).OrderBy(d => d.DeviceId).Select(d => d.DeviceId).ToListAsync(ct);
+        var codes = await db.DataDevices(caller).AsNoTracking().Where(d => d.IsActive).OrderBy(d => d.DeviceId).Select(d => d.DeviceId).ToListAsync(ct);
         var list = new List<DeviceComparisonDto>();
-        foreach (var c in codes) list.Add(await CompareAsync(c, nearbyRadiusKm, ct));
+        foreach (var c in codes) list.Add(await CompareAsync(c, nearbyRadiusKm, caller, ct));
         return list;
     }
 }
