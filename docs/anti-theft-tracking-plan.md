@@ -70,4 +70,5 @@
 ## 8. Other known open items (not part of tracking)
 
 - 498 older sensor readings (11 to 12 Oct) are not processed into `ManipulatedSensorData`, so dates before 14 Oct 19:05 show nothing. Backfill is an idempotent `EXEC dbo.ProcessSensorData` run; waiting for approval.
-- `GovernmentStationReadings` grows by about 3,400 rows per hour (all of India). Plan: keep only stations within 50 km of a device, add a 90-day purge, and clean old rows. Needs a `DELETE` grant for the runtime login.
+- Done (19 Oct 2026): the government sync no longer reads the whole feed. It finds each device's nearest station from the stored station list and asks data.gov.in for that one station only (about 7 rows), every 2 hours. Nothing is purged, so history is kept. The table was truncated once on 19 Oct at the owner's request.
+- Done (19 Oct 2026): `vayuvata_uat` was found to be a `db_owner` member of the UAT database (the hardening notes say it must not be). It was removed after a rolled-back dry run; a background watcher was left to roll it back if the first real device post failed. If ingestion ever returns HTTP 500 after this, re-add with `ALTER ROLE db_owner ADD MEMBER vayuvata_uat;` using the migration login, then investigate.

@@ -295,3 +295,13 @@ Payload: `deviceId, recordedAt (UTC ISO-8601, required, not in the future), fix 
 `fix:false` = "no fix" report: lat/lon/altM/speedKmh must be null (stored NULL). Validation: lat -90..90, lon -180..180, speed ≥ 0, source gps|cell -> otherwise **400**.
 Responses: **201** stored, **200** duplicate `(deviceId, recordedAt)` (idempotent, returns the stored report), 400 bad payload, 401 bad/missing key (also unknown device), 403 inactive device, 413 body > 16 KB, 429 rate limit, 5xx server.
 Table columns: `ID, device_id (FK -> Devices.DeviceId), recorded_at (UTC), received_at (SQL Server UTC), has_fix, source, latitude decimal(9,6), longitude decimal(9,6), altitude_m decimal(7,1), speed_kmh decimal(6,1), signal_pct tinyint`; unique `(device_id, recorded_at)`; CHECK constraints for ranges, source and fix/position consistency. Migration `GpsLocationData`.
+
+## Government comparison (CPCB, data.gov.in)
+
+Each device is compared with the nearest official monitoring station. Source: data.gov.in "Real time Air Quality Index from various locations" (CPCB, hourly, published about 2-3 h late). The feed has pollutant averages but **no official AQI**; AQI on both sides is calculated from PM2.5 / PM10 with the same formula.
+
+- **How it fetches.** The station LIST (names + positions) is read from the whole feed only when empty or older than `DataGov:StationListRefreshDays` (7). Every `DataGov:IntervalMinutes` (default **120**) the service takes each active device's latest GPS fix, walks the nearest stations (max `DataGov:MaxCandidates` = 6, within `MaxMatchDistanceKm` = 50) and asks the feed for **that one station only** (`filters[station]`, about 7 rows) until one has fresh PM data. Nothing else is stored and **nothing is purged**: history is kept. The device itself still reports every minute.
+- **Matching.** Nearest eligible station (fresh PM reading within `StaleAfterHours` = 3); the mapping only moves when another station is at least `SwitchHysteresisKm` (0.5) closer or the current one stops reporting. Mapping history is kept (`DeviceStationMappings.ValidTo`).
+- **Config** (`DataGov:*`): `ApiKey` or `ApiKeyFile` (a server secret, never in git), `ResourceId`, `Enabled`, `IntervalMinutes`, `MaxMatchDistanceKm`, `StaleAfterHours`, `StationListRefreshDays`, `MaxCandidates`.
+- **API** (`/api/v1/government`): `GET status`, `GET comparison[/{deviceId}]` (any role, own devices only), `POST sync` and `POST match` (SuperAdmin only).
+- **Compared values.** The latest reading of each side with both times shown; PM2.5, PM10 and the calculated AQI are subtracted, gases are shown but not subtracted (units differ), TVOC / temperature / humidity have no government counterpart.

@@ -20,7 +20,7 @@ public class GovDataOptions
     public string? ApiKey { get; set; }
     public string? ApiKeyFile { get; set; }
     public int PageSize { get; set; } = 1000;
-    public int IntervalMinutes { get; set; } = 60;
+    public int IntervalMinutes { get; set; } = 120;
     /// <summary>A device is only matched to a station within this distance.</summary>
     public double MaxMatchDistanceKm { get; set; } = 50;
     /// <summary>A station whose newest observation is older than this is not eligible and its data is labelled stale.</summary>
@@ -29,6 +29,10 @@ public class GovDataOptions
     public double SwitchHysteresisKm { get; set; } = 0.5;
     /// <summary>Device readings in the window [observedAt - this, observedAt] are averaged against the hourly government value.</summary>
     public int ComparisonWindowMinutes { get; set; } = 60;
+    /// <summary>The station LIST (names and positions, no readings) is re-read from the whole feed only when it is empty or this old.</summary>
+    public int StationListRefreshDays { get; set; } = 7;
+    /// <summary>Nearest stations tried, in order of distance, until one has fresh PM data.</summary>
+    public int MaxCandidates { get; set; } = 6;
 }
 
 /// <summary>CPCB AQI for PM2.5 / PM10 with exactly the firmware's integer arithmetic (see Tests/firmware/calculateAQI_INDIA.cpp).</summary>
@@ -85,13 +89,15 @@ public class GovernmentDataService(VayuVataDbContext db, IHttpClientFactory http
     private static decimal? Num(string? s) =>
         decimal.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : null;
 
-    private async Task<List<FeedRow>> FetchAsync(string key, CancellationToken ct)
+    /// <summary>stationName = null reads the whole feed (only to refresh the station list); otherwise only that station's rows (about 7).</summary>
+    private async Task<List<FeedRow>> FetchAsync(string key, string? stationName, CancellationToken ct)
     {
         var client = http.CreateClient("datagov");
         var rows = new List<FeedRow>();
         for (int offset = 0, total = int.MaxValue; offset < total; offset += _o.PageSize)
         {
-            var url = $"{_o.BaseUrl.TrimEnd('/')}/{_o.ResourceId}?api-key={Uri.EscapeDataString(key)}&format=json&limit={_o.PageSize}&offset={offset}";
+            var url = $"{_o.BaseUrl.TrimEnd('/')}/{_o.ResourceId}?api-key={Uri.EscapeDataString(key)}&format=json&limit={_o.PageSize}&offset={offset}"
+                + (stationName is null ? "" : $"&filters%5Bstation%5D={Uri.EscapeDataString(stationName)}");
             using var resp = await client.GetAsync(url, ct);
             if (!resp.IsSuccessStatusCode) throw new InvalidOperationException($"data.gov.in answered HTTP {(int)resp.StatusCode}.");
             using var doc = await JsonDocument.ParseAsync(await resp.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
@@ -106,6 +112,7 @@ public class GovernmentDataService(VayuVataDbContext db, IHttpClientFactory http
                 if (!DateTime.TryParseExact(S("last_update"), "dd-MM-yyyy HH:mm:ss", CultureInfo.InvariantCulture, DateTimeStyles.None, out var obs)) continue;
                 var name = S("station"); var pol = S("pollutant_id");
                 if (name.Length == 0 || pol.Length == 0) continue;
+                if (stationName is not null && !string.Equals(name, stationName, StringComparison.OrdinalIgnoreCase)) continue;   // never trust the server-side filter alone
                 rows.Add(new FeedRow(name, S("city"), S("state"), lat.Value, lon.Value, pol.ToUpperInvariant(), obs, Num(S("min_value")), Num(S("max_value")), Num(S("avg_value"))));
             }
         }
@@ -121,41 +128,40 @@ public class GovernmentDataService(VayuVataDbContext db, IHttpClientFactory http
         {
             db.GovernmentSyncLogs.Add(logRow); await db.SaveChangesAsync(ct);
             var key = ResolveApiKey() ?? throw new InvalidOperationException("No data.gov.in API key is configured (DataGov:ApiKey or DataGov:ApiKeyFile).");
-            var rows = await FetchAsync(key, ct);
-            result.RecordsFetched = logRow.RecordsFetched = rows.Count;
 
-            // stations (identity = name + position)
+            // 1. The station LIST (name + position only, no readings) is read from the whole feed only when it is empty or older than StationListRefreshDays.
+            var listAge = await db.GovernmentStations.MaxAsync(x => (DateTime?)x.LastSeenAt, ct);
+            if (listAge is null || listAge < DateTime.UtcNow.AddDays(-_o.StationListRefreshDays))
+                result.StationsAdded = await RefreshStationListAsync(key, ct);
+
+            // 2. For every active device: walk its nearest stations and ask the feed for THAT station only (about 7 rows) until one has fresh PM data.
             var stations = await db.GovernmentStations.ToListAsync(ct);
-            var byKey = stations.ToDictionary(s => (s.Name, R6(s.Latitude), R6(s.Longitude)));
-            var now = DateTime.UtcNow;
-            foreach (var g in rows.GroupBy(r => (r.Station, Lat: R6(r.Lat), Lon: R6(r.Lon))))
+            var asked = new Dictionary<int, List<FeedRow>>();            // a station shared by two devices is fetched once per sync
+            var codes = await db.Devices.AsNoTracking().Where(d => d.IsActive).Select(d => d.DeviceId).ToListAsync(ct);
+            var floor = IstNow.AddHours(-_o.StaleAfterHours);
+            foreach (var code in codes)
             {
-                if (!byKey.TryGetValue(g.Key, out var st))
+                var fix = await LatestFixAsync(code, ct);
+                if (fix is null) continue;
+                double dLat = (double)fix.Latitude!.Value, dLon = (double)fix.Longitude!.Value;
+                var candidates = stations.Select(x => (Station: x, Km: HaversineKm(dLat, dLon, (double)x.Latitude, (double)x.Longitude)))
+                    .Where(x => x.Km <= _o.MaxMatchDistanceKm).OrderBy(x => x.Km).Take(_o.MaxCandidates).ToList();
+                foreach (var (st, _) in candidates)
                 {
-                    var f = g.First();
-                    st = new GovernmentStation { Name = f.Station, City = f.City, State = f.State, Latitude = R6(f.Lat), Longitude = R6(f.Lon) };
-                    db.GovernmentStations.Add(st); byKey[g.Key] = st; result.StationsAdded++;
+                    if (!asked.TryGetValue(st.Id, out var rows))
+                    {
+                        rows = await FetchAsync(key, st.Name, ct);
+                        asked[st.Id] = rows;
+                        result.RecordsFetched += rows.Count;
+                        result.ReadingsAdded += await StoreReadingsAsync(st, rows, ct);
+                    }
+                    var usable = rows.Any(r => (r.Pollutant is "PM2.5" or "PM10") && r.Avg is not null && r.Observed >= floor);
+                    if (usable) break;                                   // nearest station with fresh data found: stop asking for others
                 }
-                st.LastSeenAt = now;
             }
-            await db.SaveChangesAsync(ct);
+            logRow.RecordsFetched = result.RecordsFetched;
 
-            // readings: only unseen (station, pollutant, observedAt); rows with no value at all are not stored
-            var observedSet = rows.Select(r => r.Observed).Distinct().ToList();
-            var existing = (await db.GovernmentStationReadings.Where(r => observedSet.Contains(r.ObservedAt))
-                .Select(r => new { r.StationId, r.Pollutant, r.ObservedAt }).ToListAsync(ct))
-                .Select(r => (r.StationId, r.Pollutant, r.ObservedAt)).ToHashSet();
-            foreach (var r in rows)
-            {
-                if (r.Avg is null && r.Min is null && r.Max is null) continue;
-                var st = byKey[(r.Station, R6(r.Lat), R6(r.Lon))];
-                if (!existing.Add((st.Id, r.Pollutant, r.Observed))) continue;
-                db.GovernmentStationReadings.Add(new GovernmentStationReading
-                { StationId = st.Id, Pollutant = r.Pollutant, ObservedAt = r.Observed, MinValue = r.Min, MaxValue = r.Max, AvgValue = r.Avg, FetchedAt = now });
-                result.ReadingsAdded++;
-            }
-            await db.SaveChangesAsync(ct);
-
+            // 3. Map each device to its nearest eligible station (the history of mappings is kept).
             var (matched, switched) = await MatchAllAsync(ct);
             result.DevicesMatched = matched; result.DevicesSwitched = switched;
             logRow.StationsAdded = result.StationsAdded; logRow.ReadingsAdded = result.ReadingsAdded;
@@ -184,6 +190,46 @@ public class GovernmentDataService(VayuVataDbContext db, IHttpClientFactory http
             Gate.Release();
         }
         return result;
+    }
+
+    /// <summary>Reads the whole feed ONCE to learn the stations (name, city, position). No readings are stored from it.</summary>
+    private async Task<int> RefreshStationListAsync(string key, CancellationToken ct)
+    {
+        var rows = await FetchAsync(key, null, ct);
+        var existing = await db.GovernmentStations.ToListAsync(ct);
+        var byKey = existing.ToDictionary(x => (x.Name, R6(x.Latitude), R6(x.Longitude)));
+        var now = DateTime.UtcNow; var added = 0;
+        foreach (var g in rows.GroupBy(r => (r.Station, Lat: R6(r.Lat), Lon: R6(r.Lon))))
+        {
+            if (!byKey.TryGetValue(g.Key, out var st))
+            {
+                var f = g.First();
+                st = new GovernmentStation { Name = f.Station, City = f.City, State = f.State, Latitude = R6(f.Lat), Longitude = R6(f.Lon) };
+                db.GovernmentStations.Add(st); byKey[g.Key] = st; added++;
+            }
+            st.LastSeenAt = now;
+        }
+        await db.SaveChangesAsync(ct);
+        return added;
+    }
+
+    /// <summary>Stores the rows of ONE station that are not stored yet (station + pollutant + observation time is unique). Rows with no value at all are skipped.</summary>
+    private async Task<int> StoreReadingsAsync(GovernmentStation station, List<FeedRow> rows, CancellationToken ct)
+    {
+        var observed = rows.Select(r => r.Observed).Distinct().ToList();
+        var have = (await db.GovernmentStationReadings.Where(r => r.StationId == station.Id && observed.Contains(r.ObservedAt))
+            .Select(r => new { r.Pollutant, r.ObservedAt }).ToListAsync(ct)).Select(r => (r.Pollutant, r.ObservedAt)).ToHashSet();
+        var now = DateTime.UtcNow; var n = 0;
+        foreach (var r in rows)
+        {
+            if (r.Avg is null && r.Min is null && r.Max is null) continue;
+            if (!have.Add((r.Pollutant, r.Observed))) continue;
+            db.GovernmentStationReadings.Add(new GovernmentStationReading
+            { StationId = station.Id, Pollutant = r.Pollutant, ObservedAt = r.Observed, MinValue = r.Min, MaxValue = r.Max, AvgValue = r.Avg, FetchedAt = now });
+            n++;
+        }
+        await db.SaveChangesAsync(ct);
+        return n;
     }
 
     // -------------------------------------------------------------- matching
