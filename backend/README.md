@@ -305,3 +305,14 @@ Each device is compared with the nearest official monitoring station. Source: da
 - **Config** (`DataGov:*`): `ApiKey` or `ApiKeyFile` (a server secret, never in git), `ResourceId`, `Enabled`, `IntervalMinutes`, `MaxMatchDistanceKm`, `StaleAfterHours`, `StationListRefreshDays`, `MaxCandidates`.
 - **API** (`/api/v1/government`): `GET status`, `GET comparison[/{deviceId}]` (any role, own devices only), `POST sync` and `POST match` (SuperAdmin only).
 - **Compared values.** The latest reading of each side with both times shown; PM2.5, PM10 and the calculated AQI are subtracted, gases are shown but not subtracted (units differ), TVOC / temperature / humidity have no government counterpart.
+
+## Shelly smart switches (power on/off of a device)
+
+A Shelly switch (relay) is controlled through the **Shelly Cloud** and linked to one VayuVata device (one switch per device).
+
+- **Who:** SuperAdmin registers/edits switches (`POST/PUT /api/v1/shelly-devices`), sees all of them, and can switch. An Admin sees and switches only the switches whose VayuVata device is assigned to them or to one of their Users (the same visibility as sensor data). Users have no access.
+- **Registering:** Shelly device id (e.g. `d0cf13cb84d4`), the cloud `auth_key`, the cloud server (default `shelly-277-eu.shelly.cloud`, must end in `.shelly.cloud`), channel (default 0) and the VayuVata device. The auth key is stored as plain text in `dbo.ShellyDevices.AuthKey` (owner's decision) and is **never returned** by the API (the SuperAdmin gets only the last 4 characters; an Admin gets nothing).
+- **Switching:** `GET /{id}/status` (live: online, ON/OFF, power, voltage, current, temperature, Wi-Fi) and `POST /{id}/switch {"on": true|false}` call `https://<cloud host>/device/status` and `/v2/devices/api/set/switch`. Every command is recorded in `dbo.ShellyCommands` (who, when, result; `GET /{id}/commands`) and logged as an `AUDIT shelly switch` line. The same switch cannot be commanded again within `Shelly:MinSecondsBetweenCommands` (2 s).
+- **Safety:** the cloud host is validated against `Shelly:AllowedHostSuffixes` (so the server cannot be aimed at another address); `Shelly:AllowHttp` exists only for tests against a fake cloud and must stay off; the HTTP client's request logging is removed because the status URL carries the key.
+- **Delete (SuperAdmin only):** `DELETE /api/v1/shelly-devices/{id}` removes the switch and its command history for good (it does not touch the physical switch). The runtime database login can delete from these two tables only, through `Database/GrantShellyDelete.sql` (already applied to the UAT database; run it once with the migration login on any other database). To keep a record but stop using a switch, deactivate it (`isActive: false`) instead.
+- **Schema:** migration `ShellyDevices` (tables `ShellyDevices`, `ShellyCommands`); same DDL in `Database/ShellyDevices.sql`.

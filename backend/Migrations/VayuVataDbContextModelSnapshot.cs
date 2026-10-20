@@ -651,6 +651,110 @@ namespace VayuVata.Migrations
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
                 });
 
+            modelBuilder.Entity("VayuVata.Models.ShellyCommand", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("At")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<int>("ShellyDeviceId")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("Succeeded")
+                        .HasColumnType("bit");
+
+                    b.Property<bool>("TurnOn")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("ShellyDeviceId", "At")
+                        .HasDatabaseName("IX_ShellyCommands_device_at");
+
+                    b.ToTable("ShellyCommands", (string)null);
+                });
+
+            modelBuilder.Entity("VayuVata.Models.ShellyDevice", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("AuthKey")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<byte>("Channel")
+                        .HasColumnType("tinyint");
+
+                    b.Property<string>("CloudHost")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("DeviceCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasColumnName("device_id");
+
+                    b.Property<bool>("IsActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
+
+                    b.Property<string>("ShellyId")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(32)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DeviceCode")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ShellyDevices_device")
+                        .HasFilter("[device_id] IS NOT NULL");
+
+                    b.HasIndex("ShellyId")
+                        .IsUnique()
+                        .HasDatabaseName("UX_ShellyDevices_ShellyId");
+
+                    b.ToTable("ShellyDevices", (string)null);
+                });
+
             modelBuilder.Entity("VayuVata.Models.User", b =>
                 {
                     b.Property<int>("Id")
@@ -832,6 +936,36 @@ namespace VayuVata.Migrations
                     b.Navigation("Device");
                 });
 
+            modelBuilder.Entity("VayuVata.Models.ShellyCommand", b =>
+                {
+                    b.HasOne("VayuVata.Models.ShellyDevice", "ShellyDevice")
+                        .WithMany("Commands")
+                        .HasForeignKey("ShellyDeviceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("VayuVata.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("ShellyDevice");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("VayuVata.Models.ShellyDevice", b =>
+                {
+                    b.HasOne("VayuVata.Models.Device", "Device")
+                        .WithMany()
+                        .HasForeignKey("DeviceCode")
+                        .HasPrincipalKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Device");
+                });
+
             modelBuilder.Entity("VayuVata.Models.User", b =>
                 {
                     b.HasOne("VayuVata.Models.User", "Manager")
@@ -850,6 +984,11 @@ namespace VayuVata.Migrations
             modelBuilder.Entity("VayuVata.Models.GovernmentStation", b =>
                 {
                     b.Navigation("Readings");
+                });
+
+            modelBuilder.Entity("VayuVata.Models.ShellyDevice", b =>
+                {
+                    b.Navigation("Commands");
                 });
 
             modelBuilder.Entity("VayuVata.Models.User", b =>

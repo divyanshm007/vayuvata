@@ -4,7 +4,8 @@ import type {
   AdminUsersPage, AssignmentDto, CreateDeviceRequest, CreateManagedUserRequest, CreateUserRequest, DeviceDto, DeviceQuery,
   DeviceKeyHashDto, DeviceWithKeyDto, HealthResponse, HistoryQuery, LoginResponse, PageParams, PagedResult, Profile, SensorDataDto,
   SensorDataQuery, UpdateDeviceRequest, UpdateUserRequest, UserDto, UserQuery,
-  GovDeviceComparison, GovStatus, GovSyncResult, SensorSeriesResult,
+  GovDeviceComparison, GovStatus, GovSyncResult, SensorSeriesResult, DeviceHealth,
+  ShellyDevice, ShellyStatus, ShellyCommand, CreateShellyRequest, UpdateShellyRequest,
 } from '../types/api';
 
 const data = <T,>(p: Promise<{ data: T }>) => p.then((r) => r.data);
@@ -34,6 +35,8 @@ export const usersApi = {
 };
 
 export const devicesApi = {
+  /** Health of the caller's devices from their last hour of readings (offline, or the outer RS485 sensor missing). */
+  health: () => data(http.get<DeviceHealth[]>('/devices/health')),
   list: (q: DeviceQuery) => data(http.get<PagedResult<DeviceDto>>('/devices', { params: clean(q) })),
   get: (id: number) => data(http.get<DeviceDto>(`/devices/${id}`)),
   create: (b: CreateDeviceRequest) => data(http.post<DeviceWithKeyDto>('/devices', b)),
@@ -44,6 +47,18 @@ export const devicesApi = {
   assign: (id: number, userId: number, notes?: string) => data(http.post<DeviceDto>(`/devices/${id}/assign`, { userId, notes: notes || null })),
   unassign: (id: number, notes?: string) => data(http.post<DeviceDto>(`/devices/${id}/unassign`, { notes: notes || null })),
   assignments: (id: number, q: PageParams = {}) => data(http.get<PagedResult<AssignmentDto>>(`/devices/${id}/assignments`, { params: clean(q) })),
+};
+
+export const shellyApi = {
+  list: () => data(http.get<ShellyDevice[]>('/shelly-devices')),
+  create: (b: CreateShellyRequest) => data(http.post<ShellyDevice>('/shelly-devices', b)),
+  update: (id: number, b: UpdateShellyRequest) => data(http.put<ShellyDevice>(`/shelly-devices/${id}`, b)),
+  /** SuperAdmin only. Removes the switch and its command history for good. */
+  remove: (id: number) => http.delete(`/shelly-devices/${id}`).then(() => undefined),
+  /** Live state from the Shelly Cloud (can take a second or two). */
+  status: (id: number) => data(http.get<ShellyStatus>(`/shelly-devices/${id}/status`, { timeout: 30_000 })),
+  switch: (id: number, on: boolean) => data(http.post<{ ok: boolean; on: boolean; message: string }>(`/shelly-devices/${id}/switch`, { on }, { timeout: 30_000 })),
+  commands: (id: number) => data(http.get<ShellyCommand[]>(`/shelly-devices/${id}/commands`)),
 };
 
 export const sensorApi = {

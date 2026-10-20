@@ -16,6 +16,7 @@ const LatestPage = lazy(() => import('../features/sensor-data/LatestPage'));
 const AnalyticsPage = lazy(() => import('../features/analytics/AnalyticsPage'));
 const ReportsPage = lazy(() => import('../features/analytics/ReportsPage'));
 const GovComparisonPage = lazy(() => import('../features/government/GovComparisonPage'));
+const ShellyPage = lazy(() => import('../features/shelly/ShellyPage'));
 const HealthPage = lazy(() => import('../features/health/HealthPage'));
 const UsersPage = lazy(() => import('../features/users/UserPages').then((m) => ({ default: m.UsersPage })));
 const AdminsPage = lazy(() => import('../features/users/UserPages').then((m) => ({ default: m.AdminsPage })));
@@ -78,6 +79,7 @@ export default function AppRoutes() {
           <Route path="analytics" element={<AnalyticsPage />} />
           <Route path="reports" element={<ReportsPage />} />
           <Route path="gov-comparison" element={<GovComparisonPage />} />
+          <Route path="shelly" element={<RequireRole roles={OPS}><ShellyPage /></RequireRole>} />
           <Route path="health" element={<RequireRole roles={OPS}><HealthPage /></RequireRole>} />
           <Route path="profile" element={<ProfilePage />} />
           <Route path="change-password" element={<ChangePasswordPage />} />

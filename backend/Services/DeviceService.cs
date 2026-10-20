@@ -118,6 +118,56 @@ public class DeviceService(
         return WithKey(await GetAsync(id, caller, ct), raw);
     }
 
+    private const decimal OuterWarnPercent = 20, OuterFailPercent = 80;
+    private const int OuterMinSamples = 10;
+
+    /// <summary>
+    /// Health of the caller's devices from their last hour of readings (IST wall-clock): offline, or the RS485 outer sensor missing from many readings.
+    /// Same visibility as sensor data: SuperAdmin all, Admin their own and their Users' devices, User their own.
+    /// </summary>
+    public async Task<List<DeviceHealthDto>> HealthAsync(CurrentUser caller, CancellationToken ct)
+    {
+        var devs = await db.DataDevices(caller).AsNoTracking().Where(d => d.IsActive).OrderBy(d => d.DeviceId)
+            .Select(d => new { d.Id, d.DeviceId, d.DeviceName }).ToListAsync(ct);
+        var codes = devs.Select(d => d.DeviceId).ToList();
+        var from = DateTime.UtcNow.AddMinutes(330).AddMinutes(-60);
+        var hour = await db.ManipulatedSensorData.AsNoTracking().Where(s => codes.Contains(s.DeviceCode) && s.RecordedAt >= from)
+            .GroupBy(s => s.DeviceCode)
+            .Select(g => new { Code = g.Key, N = g.Count(), Missing = g.Count(s => s.OuterTemperature == null || s.OuterHumidity == null) }).ToListAsync(ct);
+        var last = await db.ManipulatedSensorData.AsNoTracking().Where(s => codes.Contains(s.DeviceCode))
+            .GroupBy(s => s.DeviceCode).Select(g => new { Code = g.Key, At = g.Max(s => s.RecordedAt) }).ToListAsync(ct);
+
+        return devs.Select(d =>
+        {
+            var h = hour.FirstOrDefault(x => x.Code == d.DeviceId);
+            var l = last.FirstOrDefault(x => x.Code == d.DeviceId)?.At;
+            var dto = new DeviceHealthDto
+            {
+                Id = d.Id, DeviceId = d.DeviceId, DeviceName = d.DeviceName, LastReadingAt = l,
+                ReadingsLastHour = h?.N ?? 0, OuterMissingLastHour = h?.Missing ?? 0,
+            };
+            if (h is null || h.N == 0)
+            {
+                dto.Status = "offline";
+                dto.Message = l is null ? "This device has not reported any readings yet."
+                    : $"No readings in the last hour (last reading {l:dd MMM yyyy HH:mm} IST). Check power, Wi-Fi or SIM.";
+                return dto;
+            }
+            dto.OuterMissingPercent = Math.Round(100m * h.Missing / h.N, 1);
+            if (h.N >= OuterMinSamples && dto.OuterMissingPercent >= OuterFailPercent)
+            {
+                dto.Status = "failing";
+                dto.Message = $"Outer temperature / humidity are missing in {dto.OuterMissingPercent:0}% of the last {h.N} readings. The RS485 outer sensor is not answering reliably: check its wiring (A/B, ground, termination) and power.";
+            }
+            else if (h.N >= OuterMinSamples && dto.OuterMissingPercent >= OuterWarnPercent)
+            {
+                dto.Status = "warning";
+                dto.Message = $"Outer temperature / humidity are missing in {dto.OuterMissingPercent:0}% of the last {h.N} readings (intermittent RS485 problem).";
+            }
+            return dto;
+        }).ToList();
+    }
+
     public async Task<PagedResult<DeviceDto>> ListForUserAsync(int userId, PageQuery page, CurrentUser caller, CancellationToken ct)
     {
         if (!await db.VisibleUsers(caller).AnyAsync(u => u.Id == userId, ct))

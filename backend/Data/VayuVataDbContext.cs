@@ -17,6 +17,8 @@ public class VayuVataDbContext(DbContextOptions<VayuVataDbContext> options) : Db
     public DbSet<GovernmentStationReading> GovernmentStationReadings => Set<GovernmentStationReading>();
     public DbSet<DeviceStationMapping> DeviceStationMappings => Set<DeviceStationMapping>();
     public DbSet<GovernmentSyncLog> GovernmentSyncLogs => Set<GovernmentSyncLog>();
+    public DbSet<ShellyDevice> ShellyDevices => Set<ShellyDevice>();
+    public DbSet<ShellyCommand> ShellyCommands => Set<ShellyCommand>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
         => modelBuilder.ApplyConfigurationsFromAssembly(typeof(VayuVataDbContext).Assembly);

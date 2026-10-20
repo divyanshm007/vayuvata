@@ -17,6 +17,7 @@ import { useAuth } from '../auth/AuthContext';
 import { useDevices } from '../devices/useDevices';
 import { useLatest } from '../sensor-data/useLatest';
 import { presetRange, useRange, useSeries } from '../analytics/useSeries';
+import { DeviceHealthAlerts, useDeviceHealth } from '../devices/useDeviceHealth';
 import { toSeries, C } from '../analytics/charts';
 import { fmtNum, fmtWallClock, isRecentlyReporting, parseApiDate } from '../../utils/format';
 import { aqiCategory } from '../../utils/aqi';
@@ -52,6 +53,7 @@ export default function DashboardPage() {
   const r = role ?? 'User';
   const counts = useCounts(r);
   const dev = useDevices();
+  const health = useDeviceHealth();
   const latest = useLatest(dev.devices, !dev.loading);
   const [range, setRange] = useRange('7d');
   const [deviceId, setDeviceId] = useState('');
@@ -123,6 +125,7 @@ export default function DashboardPage() {
         <Card sx={{ mb: 2 }}><EmptyState title={r === 'User' ? 'No devices assigned to you yet' : 'No devices to show yet'} hint={r === 'User' ? 'Ask your administrator to assign a device.' : r === 'SuperAdmin' ? 'Register a device to start receiving data.' : 'Devices appear here once assigned to your users.'} /></Card>
       )}
       {!!counts.error && <Alert severity="warning" sx={{ mb: 2 }}>Some summary figures could not be loaded.</Alert>}
+      <DeviceHealthAlerts problems={health.problems} />
 
       {/* air-quality metrics (latest reading of the most recently reporting device) */}
       <Box sx={{ ...grid({ xs: 'repeat(2, minmax(0, 1fr))', md: 'repeat(3, minmax(0, 1fr))', lg: 'repeat(4, minmax(0, 1fr))' }), mb: 2 }}>

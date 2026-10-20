@@ -9,6 +9,7 @@ import { fmtNum, fmtUtc, fmtWallClock, isRecentlyReporting, toApiDateTime, toApi
 import { useAuth } from '../auth/AuthContext';
 import { AqiLegend, AqiTrendChart, ChartCard, PmChart, TempHumChart, toSeries } from '../analytics/charts';
 import { RangePicker, useRange, useSeries } from '../analytics/useSeries';
+import { DeviceHealthAlerts, useDeviceHealth } from './useDeviceHealth';
 import { ReadingDetail } from '../sensor-data/ReadingParts';
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -18,6 +19,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 export default function DeviceDetailPage() {
   const id = Number(useParams().id);
   const { role } = useAuth();
+  const health = useDeviceHealth();
   const canHistory = role === 'SuperAdmin' || role === 'Admin';
   const dev = useAsync(() => devicesApi.get(id), [id], Number.isFinite(id));
   const latest = useAsync(() => sensorApi.latest(id), [id], Number.isFinite(id));
@@ -45,6 +47,7 @@ export default function DeviceDetailPage() {
       <PageHeader title={d?.deviceName ?? 'Device'} subtitle={d?.deviceId}
         crumbs={[{ label: 'Home', to: '/' }, { label: role === 'User' ? 'My Devices' : 'Devices', to: '/devices' }, { label: d?.deviceName ?? '…' }]} />
       {(dev.loading || latest.loading) && <LinearProgress sx={{ mb: 2 }} />}
+      <DeviceHealthAlerts problems={health.problems.filter((h) => h.id === id)} />
       {d && (
         <Grid container spacing={2}>
           <Grid item xs={12} lg={5}>

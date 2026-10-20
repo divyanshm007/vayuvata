@@ -47,6 +47,22 @@ public class DeviceQuery : PageQuery
     public bool? Assigned { get; set; }
 }
 
+/// <summary>Is the device reporting, and is its RS485 outer sensor delivering? Based on the last hour of processed readings.</summary>
+public class DeviceHealthDto
+{
+    public int Id { get; set; }
+    public string DeviceId { get; set; } = "";
+    public string DeviceName { get; set; } = "";
+    /// <summary>ok | warning (outer values intermittently missing) | failing (mostly missing) | offline (no readings in the last hour)</summary>
+    public string Status { get; set; } = "ok";
+    public string? Message { get; set; }
+    public int ReadingsLastHour { get; set; }
+    /// <summary>Readings of the last hour without outer temperature or outer humidity.</summary>
+    public int OuterMissingLastHour { get; set; }
+    public decimal OuterMissingPercent { get; set; }
+    public DateTime? LastReadingAt { get; set; }
+}
+
 public class DeviceDto
 {
     public int Id { get; set; }

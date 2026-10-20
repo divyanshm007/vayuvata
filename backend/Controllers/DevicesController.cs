@@ -35,6 +35,11 @@ public class DevicesController(DeviceService devices, DeviceAssignmentService as
         await devices.ListAsync(q, Me, ct);
 
     /// <summary>Get one device by database id.</summary>
+    /// <summary>Device health from the last hour of readings: offline, or the RS485 outer sensor missing from many readings. Only the caller's own devices.</summary>
+    [HttpGet("health")]
+    [ProducesResponseType<List<DeviceHealthDto>>(200)]
+    public async Task<ActionResult<List<DeviceHealthDto>>> Health(CancellationToken ct) => await devices.HealthAsync(Me, ct);
+
     [HttpGet("{id:int}")]
     [ProducesResponseType<DeviceDto>(200)]
     [ProducesResponseType<ApiError>(404)]

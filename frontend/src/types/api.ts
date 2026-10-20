@@ -56,6 +56,24 @@ export interface SensorDataQuery extends PageParams {
 }
 export interface HistoryQuery extends PageParams { from?: string; to?: string; sortDir?: 'asc' | 'desc' }
 
+export interface DeviceHealth {
+  id: number; deviceId: string; deviceName: string; status: 'ok' | 'warning' | 'failing' | 'offline'; message: string | null;
+  readingsLastHour: number; outerMissingLastHour: number; outerMissingPercent: number; lastReadingAt: string | null;
+}
+
+// ---- Shelly smart switches
+export interface ShellyDevice {
+  id: number; name: string; shellyId: string; cloudHost: string; channel: number; deviceId: string | null; deviceName: string | null;
+  isActive: boolean; authKeyHint: string | null; createdAt: string; lastCommandAt: string | null; lastCommandOn: boolean | null; lastCommandBy: string | null;
+}
+export interface ShellyStatus {
+  id: number; online: boolean; on: boolean | null; powerW: number | null; voltageV: number | null; currentA: number | null; temperatureC: number | null;
+  wifiRssi: number | null; ssid: string | null; energyTotalWh: number | null; cloudUpdatedAt: string | null; checkedAt: string;
+}
+export interface ShellyCommand { id: number; turnOn: boolean; succeeded: boolean; error: string | null; userName: string; at: string }
+export interface CreateShellyRequest { name: string; shellyId: string; authKey: string; cloudHost?: string | null; channel: number; deviceId?: string | null }
+export interface UpdateShellyRequest { name: string; cloudHost?: string | null; channel: number; deviceId?: string | null; authKey?: string | null; isActive: boolean }
+
 export interface SensorSeriesResult { points: SensorDataDto[]; bucketMinutes: number; totalReadings: number; aggregated: boolean }
 
 export interface HealthResponse { status: string; database: string; timeUtc: string }

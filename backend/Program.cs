@@ -48,6 +48,10 @@ builder.Services.AddHostedService<RefreshTokenCleanupService>();
 builder.Services.Configure<GovDataOptions>(config.GetSection("DataGov"));
 builder.Services.AddHttpClient("datagov", c => { c.Timeout = TimeSpan.FromSeconds(60); });
 builder.Services.AddScoped<GovernmentDataService>();
+builder.Services.Configure<ShellyOptions>(config.GetSection("Shelly"));
+// RemoveAllLoggers: the Shelly status call carries the auth key in its URL, so request URLs must never reach the log.
+builder.Services.AddHttpClient("shelly", c => { c.Timeout = TimeSpan.FromSeconds(15); }).RemoveAllLoggers();
+builder.Services.AddScoped<ShellyService>();
 builder.Services.AddHostedService<GovernmentDataBackgroundService>();
 
 // ---- Database ----

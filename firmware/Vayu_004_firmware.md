@@ -4,7 +4,14 @@ Air-quality monitor firmware. Posts one reading per minute to `POST https://72.6
 
 Notes
 - The payload uses the API's camelCase names (`deviceId`, `recordedAt`, `no2Ppm`, `outerTemperature`, ...).
-- `outerTemperature` / `outerHumidity` are sent **only when the RS485 read succeeded** (`rsValid`). If the RS485 sensor is not detected at boot, or a read fails, they are omitted and stored as NULL.
+- `outerTemperature` / `outerHumidity` are sent **only when there is a good RS485 reading no older than 90 s** (`rsValid`); otherwise they are omitted and stored as NULL.
+- **RS485 hardening (19 Oct 2026)**, because on 18 Oct the outer sensor started failing about 95% of the time (1,479 of 1,479 readings fine before 19:04, then 17 of 357):
+  1. each read is tried up to 3 times, after flushing stale bytes;
+  2. the reply must be 9 bytes with the right address, function, byte count **and a correct Modbus CRC**, and the values must be plausible (-40..85 C, 0..100 %);
+  3. the last good value stays usable for 90 s, so one missed second no longer drops a whole minute;
+  4. if the sensor was not found at boot it is probed again every 30 s, and after 30 failed seconds in a row it is forgotten and probed again;
+  5. counters are uploaded with every reading: `rs485Ok`, `rs485Errors`, `rs485FailStreak` (the API ignores these fields for now; they are for diagnostics and a future column).
+  This improves the software side only. If the failures are electrical (A/B swapped or loose, no common ground, missing 120 ohm termination, weak sensor power, a noisy cable, DE/RE wiring) the counters will still show it: check the wiring first.
 - Likewise `aqi/pm10/pm25` need a fresh PMS5003 frame, `coPpm` needs the 3 min warm-up, `tvocPpb` needs an ENS160 reading, and `humidity/temperature` need the AHT21.
 - `API_KEY_HASH` below is a placeholder. Copy the real value from `dbo.Devices.ApiKeyHash` for `Vayu_004` (it is a device credential, so it is not stored in this repo).
 - Libraries: Adafruit AHTX0, ScioSense ENS160, ArduinoJson (v6), WiFiManager (tzapu), ESP32 core (WiFi, HTTPClient, WiFiClientSecure).
@@ -90,7 +97,7 @@ float    rsTemp  = 0, rsHum = 0;       // RS485 outer sensor
 // Validity flags — a reading that is not valid is omitted from the upload (stored as NULL, never 0)
 bool pmsValid   = false;   // fresh PMS5003 frame within PMS_WARN
 bool tvocValid  = false;   // ENS160 produced a reading
-bool rsValid    = false;   // last RS485 read succeeded
+bool rsValid    = false;   // a good RS485 reading no older than RS485_MAX_AGE exists
 bool ensPresent = false;
 
 // ================================================================
@@ -100,6 +107,17 @@ byte     reqBuf[8], resBuf[16];
 byte     correctFunc = 0;
 uint16_t correctAddr = 0;
 bool     rs485Ready  = false;
+
+// RS485 health. Counted since boot and uploaded with every reading.
+uint32_t rsOk         = 0;    // successful read cycles
+uint32_t rsErrors     = 0;    // failed read cycles (all retries used) + failed re-probes
+uint16_t rsFailStreak = 0;    // failed read cycles in a row
+unsigned long lastRsGood  = 0;   // millis() of the last good reading (0 = never)
+unsigned long lastRsProbe = 0;   // millis() of the last (re)probe
+const unsigned long RS485_MAX_AGE  = 90000UL;  // an outer value older than this is not uploaded
+const unsigned long RS485_REPROBE  = 30000UL;  // while the sensor is not found, probe again this often
+const uint16_t      RS485_FAIL_MAX = 30;       // this many failed cycles in a row -> forget the sensor and probe again
+const int           RS485_TRIES    = 3;        // attempts per read cycle
 
 // ================================================================
 //  CO WARMUP
@@ -284,7 +302,10 @@ uint16_t crc16(byte* buf, int len) {
   return crc;
 }
 
-bool probeSensor(byte func, uint16_t addr) {
+// One Modbus request/response. true only when the reply is complete AND its CRC is correct.
+bool rs485Request(byte func, uint16_t addr) {
+  while (rs485.available()) rs485.read();                  // drop stale bytes (noise, late replies)
+
   reqBuf[0] = 0x01; reqBuf[1] = func;
   reqBuf[2] = addr >> 8; reqBuf[3] = addr & 0xFF;
   reqBuf[4] = 0x00; reqBuf[5] = 0x02;
@@ -299,7 +320,40 @@ bool probeSensor(byte func, uint16_t addr) {
   while (millis() - t < 150 && n < 9)
     if (rs485.available()) resBuf[n++] = rs485.read();
 
-  return (n == 9 && resBuf[0] == 0x01 && resBuf[1] == func);
+  if (n != 9 || resBuf[0] != 0x01 || resBuf[1] != func || resBuf[2] != 0x04) return false;
+  uint16_t rc = crc16(resBuf, 7);                          // CRC of address, function, byte count and the 4 data bytes
+  return resBuf[7] == (rc & 0xFF) && resBuf[8] == (rc >> 8);
+}
+
+bool probeSensor(byte func, uint16_t addr) { return rs485Request(func, addr); }
+
+// Tries the known function / register combinations; remembers the one that answers.
+bool findRS485() {
+  const byte funcs[]     = {0x03, 0x04};
+  const uint16_t addrs[] = {0x0000, 0x0001, 0x0002};
+  for (int f = 0; f < 2; f++)
+    for (int a = 0; a < 3; a++)
+      if (probeSensor(funcs[f], addrs[a])) {
+        correctFunc = funcs[f];
+        correctAddr = addrs[a];
+        rs485Ready  = true;
+        Serial.printf("[RS485] Found - func=0x%02X  reg=0x%04X\n", correctFunc, correctAddr);
+        return true;
+      }
+  return false;
+}
+
+// One read cycle with up to RS485_TRIES attempts. Updates rsTemp / rsHum only with a CRC-correct, plausible reply.
+bool readRS485() {
+  for (int i = 0; i < RS485_TRIES; i++) {
+    if (rs485Request(correctFunc, correctAddr)) {
+      float t = (int16_t)((resBuf[3] << 8) | resBuf[4]) / 10.0f;   // signed, tenths of a degree
+      float h = ((resBuf[5] << 8) | resBuf[6]) / 10.0f;
+      if (t > -40.0f && t < 85.0f && h >= 0.0f && h <= 100.0f) { rsTemp = t; rsHum = h; return true; }
+    }
+    delay(20);
+  }
+  return false;
 }
 
 // ================================================================
@@ -331,18 +385,9 @@ void setup() {
   analogSetPinAttenuation(CO_PIN,  ADC_11db);
   startTime = millis();
 
-  // RS485 auto-detect
-  byte funcs[]     = {0x03, 0x04};
-  uint16_t addrs[] = {0x0000, 0x0001, 0x0002};
-  for (int f = 0; f < 2 && !rs485Ready; f++)
-    for (int a = 0; a < 3 && !rs485Ready; a++)
-      if (probeSensor(funcs[f], addrs[a])) {
-        correctFunc = funcs[f];
-        correctAddr = addrs[a];
-        rs485Ready  = true;
-        Serial.printf("[RS485] Found — func=0x%02X  reg=0x%04X\n", correctFunc, correctAddr);
-      }
-  if (!rs485Ready) Serial.println("[RS485] Not detected");
+  // RS485 auto-detect (probed again from loop() every 30 s while the sensor is not found)
+  if (!findRS485()) Serial.println("[RS485] Not detected - will keep trying every 30 s");
+  lastRsProbe = millis();
 
   // --- WiFiManager: uses saved WiFi, else opens the setup hotspot ---
   WiFiManager wm;
@@ -418,33 +463,28 @@ void loop() {
     so2_ppm = (vSO2 < 0.4f) ? 0.0f : max(0.0f, (vSO2 - 0.4f) * (20.0f / 1.6f));
   }
 
-  // -- RS485 outer sensor (every 1 s) --
-  if (rs485Ready && now - lastRS485 >= 1000) {
+  // -- RS485 outer sensor (every 1 s): retries + CRC + re-probe; failures are counted and uploaded --
+  if (now - lastRS485 >= 1000) {
     lastRS485 = now;
-
-    reqBuf[0] = 0x01; reqBuf[1] = correctFunc;
-    reqBuf[2] = correctAddr >> 8; reqBuf[3] = correctAddr & 0xFF;
-    reqBuf[4] = 0x00; reqBuf[5] = 0x02;
-    uint16_t c = crc16(reqBuf, 6);
-    reqBuf[6] = c & 0xFF; reqBuf[7] = c >> 8;
-
-    digitalWrite(RS485_DE, HIGH); delay(1);
-    rs485.write(reqBuf, 8); rs485.flush(); delay(2);
-    digitalWrite(RS485_DE, LOW);
-
-    unsigned long t = millis(); int n = 0;
-    while (millis() - t < 150 && n < 9)
-      if (rs485.available()) resBuf[n++] = rs485.read();
-
-    if (n == 9 && resBuf[0] == 0x01 && resBuf[1] == correctFunc) {
-      rsTemp = ((resBuf[3] << 8) | resBuf[4]) / 10.0f;
-      rsHum  = ((resBuf[5] << 8) | resBuf[6]) / 10.0f;
-      rsValid = true;
+    if (!rs485Ready) {
+      if (now - lastRsProbe >= RS485_REPROBE) {
+        lastRsProbe = now;
+        if (findRS485()) { rsFailStreak = 0; Serial.println("[RS485] Sensor found again"); }
+        else             { rsErrors++;       Serial.println("[RS485] Still not detected"); }
+      }
+    } else if (readRS485()) {
+      rsOk++; rsFailStreak = 0; lastRsGood = millis();
     } else {
-      rsTemp = 0; rsHum = 0; rsValid = false;
-      Serial.println("[RS485] Read error");
+      rsErrors++; rsFailStreak++;
+      Serial.printf("[RS485] Read failed after %d tries (streak %u, total errors %lu)\n", RS485_TRIES, rsFailStreak, (unsigned long)rsErrors);
+      if (rsFailStreak >= RS485_FAIL_MAX) {
+        rs485Ready = false; lastRsProbe = 0;                // forget the sensor; the block above probes again
+        Serial.println("[RS485] Too many failures - probing again");
+      }
     }
   }
+  // The last good value stays usable for RS485_MAX_AGE, so a single missed second no longer drops the minute's upload.
+  rsValid = (lastRsGood != 0) && (millis() - lastRsGood <= RS485_MAX_AGE);
 
   // -- CO (every 3 s — 50 samples x 10 ms = 500 ms blocking) --
   if (now - lastCORead >= 3000) {
@@ -501,15 +541,19 @@ void loop() {
     Serial.println("  --- Environment ---");
     Serial.printf("  Temp  (AHT21)   : %.2f C\n",  temp);
     Serial.printf("  Hum   (AHT21)   : %.2f %%\n", hum);
-    Serial.printf("  Temp  (RS485)   : %.1f C\n",  rsTemp);
-    Serial.printf("  Hum   (RS485)   : %.1f %%\n", rsHum);
+    if (rsValid) {
+      Serial.printf("  Temp  (RS485)   : %.1f C\n",  rsTemp);
+      Serial.printf("  Hum   (RS485)   : %.1f %%\n", rsHum);
+    } else {
+      Serial.printf("  Temp/Hum (RS485): -- (no good reading; ok=%lu errors=%lu streak=%u)\n", (unsigned long)rsOk, (unsigned long)rsErrors, rsFailStreak);
+    }
     Serial.println("  --- AQI ---");
     Serial.printf("  AQI             : %d  [%s]\n", aqi, aqiLabel(aqi));
     Serial.println("===========================================");
 
     // ---- Nextion update ----
-    nx("t0.txt=\"" + String(rsTemp, 1)      + "\"");
-    nx("t1.txt=\"" + String(rsHum,  1)      + "\"");
+    nx("t0.txt=\"" + (rsValid ? String(rsTemp, 1) : String("--")) + "\"");
+    nx("t1.txt=\"" + (rsValid ? String(rsHum,  1) : String("--")) + "\"");
     nx("t2.txt=\"" + String(pm2_5)          + "\"");
     nx("t3.txt=\"" + String(pm10)           + "\"");
     nx("t5.txt=\"" + String(co_ppm,  2)     + "\"");
@@ -540,7 +584,7 @@ void loop() {
 
     int aqi = calcAQI(pm2_5, pm10);
 
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<768> doc;   // was 512; the three RS485 counters need the room
     doc["deviceId"]         = DEVICE_ID;
     // Time fields are IST (from NTP) and are stored by the server exactly as sent.
     doc["recordedAt"]       = currentDate + "T" + currentTimeS;   // e.g. 2026-10-11T15:15:56
@@ -565,6 +609,10 @@ void loop() {
       doc["outerTemperature"] = rsTemp;
       doc["outerHumidity"]    = rsHum;
     }
+    // RS485 health since boot. The API ignores unknown fields today; they are for diagnostics (and a future column).
+    doc["rs485Ok"]         = rsOk;
+    doc["rs485Errors"]     = rsErrors;
+    doc["rs485FailStreak"] = rsFailStreak;
 
     String payload;
     serializeJson(doc, payload);

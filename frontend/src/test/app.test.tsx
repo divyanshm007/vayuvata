@@ -14,7 +14,7 @@ import type { Profile, Role } from '../types/api';
 
 vi.mock('../api/services', () => ({
   authApi: { login: vi.fn(), me: vi.fn(), logout: vi.fn(), changePassword: vi.fn() },
-  devicesApi: { list: vi.fn(), get: vi.fn(), assignments: vi.fn() },
+  devicesApi: { list: vi.fn(), get: vi.fn(), assignments: vi.fn(), health: vi.fn() },
   usersApi: { list: vi.fn() },
   sensorApi: { latest: vi.fn(), list: vi.fn(), history: vi.fn(), get: vi.fn() },
   healthApi: { get: vi.fn() },
@@ -43,6 +43,7 @@ beforeAll(async () => {
 beforeEach(() => {
   vi.clearAllMocks(); tokenStore.clear(); sessionStorage.clear(); localStorage.clear();
   vi.mocked(devicesApi.list).mockResolvedValue(empty);
+  vi.mocked(devicesApi.health).mockResolvedValue([]);
   vi.mocked(usersApi.list).mockResolvedValue(empty);
   vi.mocked(sensorApi.latest).mockResolvedValue(null);
   vi.mocked(healthApi.get).mockResolvedValue({ status: 'Healthy', database: 'Connected', timeUtc: '2026-01-01T00:00:00Z' });

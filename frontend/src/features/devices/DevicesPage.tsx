@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import {
-  Button, Card, IconButton, InputAdornment, ListItemIcon, ListItemText, Menu, MenuItem, Skeleton, Stack, Table, TableBody, TableCell, TableContainer,
+  Button, Card, Chip, IconButton, InputAdornment, ListItemIcon, ListItemText, Menu, MenuItem, Skeleton, Stack, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, TextField, Tooltip, Typography, Link,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
@@ -23,12 +23,14 @@ import { errorMessage } from '../../utils/errors';
 import { useAsync, useDebounced } from '../../utils/useAsync';
 import { useAuth } from '../auth/AuthContext';
 import { useLatest } from '../sensor-data/useLatest';
+import { useDeviceHealth } from './useDeviceHealth';
 import { ApiKeyDialog, AssignDeviceDialog, EditDeviceDialog, KeyHashDialog, RegisterDeviceDialog } from './DeviceDialogs';
 
 type Pending = { kind: 'status' | 'rotate' | 'unassign'; device: DeviceDto } | null;
 
 export default function DevicesPage() {
   const { role } = useAuth();
+  const health = useDeviceHealth();
   const isSA = role === 'SuperAdmin';
   const canAssign = role === 'SuperAdmin' || role === 'Admin';
   const toast = useToast();
@@ -111,6 +113,12 @@ export default function DevicesPage() {
                     <TableCell>
                       <Link component={RouterLink} to={`/devices/${d.id}`} underline="hover" fontWeight={600}>{d.deviceName}</Link>
                       {d.description && <Typography variant="caption" display="block" color="text.secondary" noWrap sx={{ maxWidth: 240 }}>{d.description}</Typography>}
+                      {health.byDevice.get(d.deviceId) && health.byDevice.get(d.deviceId)!.status !== 'ok' && (
+                        <Tooltip title={health.byDevice.get(d.deviceId)!.message ?? ''}>
+                          <Chip size="small" sx={{ mt: 0.5 }} variant="outlined" label={health.byDevice.get(d.deviceId)!.status === 'offline' ? 'Offline' : 'Outer sensor problem'}
+                            color={health.byDevice.get(d.deviceId)!.status === 'failing' ? 'error' : 'warning'} />
+                        </Tooltip>
+                      )}
                     </TableCell>
                     <TableCell sx={{ fontFamily: 'ui-monospace, Consolas, monospace', fontSize: 13 }}>{d.deviceId}</TableCell>
                     <TableCell><ActiveChip active={d.isActive} /></TableCell>

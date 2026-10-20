@@ -1,4 +1,5 @@
 import CompareArrowsOutlined from '@mui/icons-material/CompareArrowsOutlined';
+import PowerSettingsNewOutlined from '@mui/icons-material/PowerSettingsNewOutlined';
 import type { SvgIconComponent } from '@mui/icons-material';
 import DashboardOutlined from '@mui/icons-material/DashboardOutlined';
 import PeopleOutline from '@mui/icons-material/PeopleOutline';
@@ -30,6 +31,7 @@ export const NAV: Record<Role, NavItem[]> = {
     { label: 'Admin Management', to: '/admins', icon: AdminPanelSettingsOutlined },
     { label: 'Devices', to: '/devices', icon: SensorsOutlined },
     { label: 'Device Assignments', to: '/assignments', icon: LinkOutlined },
+    { label: 'Shelly Switches', to: '/shelly', icon: PowerSettingsNewOutlined },
     { label: 'Live Device Map', to: '/device-map', icon: MapOutlined },
     { label: 'Sensor Readings', to: '/readings', icon: TableChartOutlined },
     { label: 'AQI Analytics', to: '/analytics', icon: InsightsOutlined },
@@ -42,6 +44,7 @@ export const NAV: Record<Role, NavItem[]> = {
     { label: 'Dashboard', to: '/', icon: DashboardOutlined, end: true },
     { label: 'My Users', to: '/users', icon: PeopleOutline },
     { label: 'Devices', to: '/devices', icon: SensorsOutlined },
+    { label: 'Shelly Switches', to: '/shelly', icon: PowerSettingsNewOutlined },
     { label: 'Live Device Map', to: '/device-map', icon: MapOutlined },
     { label: 'Sensor Readings', to: '/readings', icon: TableChartOutlined },
     { label: 'AQI Analytics', to: '/analytics', icon: InsightsOutlined },
