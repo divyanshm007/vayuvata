@@ -13,20 +13,17 @@ import UsersListView from './UsersListView';
 export function UsersPage() {
   const { role } = useAuth();
   const isSA = role === 'SuperAdmin';
-  const [roleFilter, setRoleFilter] = useState('');
   const [scope, setScope] = useState('');
   return (
     <UsersListView
       title={isSA ? 'Users' : 'My Users'}
-      subtitle={isSA ? 'All accounts in the organisation' : 'Users you manage'}
+      subtitle={isSA ? 'Regular users. Admins are managed under Admin Management.' : 'Users you manage'}
       crumbs={[{ label: 'Home', to: '/' }, { label: isSA ? 'Users' : 'My Users' }]}
-      fetch={(p) => usersApi.list({ ...p, role: roleFilter || undefined, standalone: scope === '' ? undefined : scope === 'standalone' })}
-      fetchDeps={[roleFilter, scope]}
+      // The SuperAdmin's list is regular Users only: Admin accounts live under "Admin Management" (and the SuperAdmin account is not a "user").
+      fetch={(p) => usersApi.list({ ...p, role: isSA ? 'User' : undefined, standalone: scope === '' ? undefined : scope === 'standalone' })}
+      fetchDeps={[scope]}
       filters={isSA && (
         <>
-          <TextField select label="Role" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} sx={{ maxWidth: { md: 160 } }}>
-            <MenuItem value="">All</MenuItem><MenuItem value="SuperAdmin">SuperAdmin</MenuItem><MenuItem value="Admin">Admin</MenuItem><MenuItem value="User">User</MenuItem>
-          </TextField>
           <TextField select label="Managed by" value={scope} onChange={(e) => setScope(e.target.value)} sx={{ maxWidth: { md: 200 } }}>
             <MenuItem value="">Anyone</MenuItem><MenuItem value="standalone">Me (standalone)</MenuItem><MenuItem value="admin">An admin</MenuItem>
           </TextField>
@@ -34,8 +31,8 @@ export function UsersPage() {
       )}
       createKind="User" createLabel="Create user"
       rowLink={(u) => `/users/${u.id}`}
-      showRole={isSA} showManager={isSA}
-      emptyTitle={isSA ? 'No accounts found' : 'You have no users yet'} emptyHint={isSA ? 'Try different filters.' : 'Create your first user to get started.'}
+      showManager={isSA}
+      emptyTitle={isSA ? 'No users found' : 'You have no users yet'} emptyHint={isSA ? 'Try different filters, or create a user.' : 'Create your first user to get started.'}
     />
   );
 }

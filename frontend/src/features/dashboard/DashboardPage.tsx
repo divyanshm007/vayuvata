@@ -35,7 +35,7 @@ function useCounts(role: 'SuperAdmin' | 'Admin' | 'User') {
     const out: Record<string, number | null> = { devices: base[0], activeDevices: base[1], assignedDevices: base[2] };
     if (role === 'SuperAdmin') {
       const u = (f: object) => count(usersApi.list({ page: 1, pageSize: 1, ...f }));
-      const [users, activeUsers, admins, standalone] = await Promise.all([u({}), u({ isActive: true }), u({ role: 'Admin' }), u({ standalone: true, role: 'User' })]);
+      const [users, activeUsers, admins, standalone] = await Promise.all([u({ role: 'User' }), u({ role: 'User', isActive: true }), u({ role: 'Admin' }), u({ standalone: true, role: 'User' })]);   // "users" = regular Users only; Admins have their own card
       Object.assign(out, { users, activeUsers, admins, standalone });
     } else if (role === 'Admin') {
       const u = (f: object) => count(usersApi.list({ page: 1, pageSize: 1, ...f }));

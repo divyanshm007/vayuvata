@@ -224,7 +224,43 @@ if (swaggerEnabled)
     app.UseSwaggerUI(o => o.SwaggerEndpoint("/swagger/v1/swagger.json", "VayuVata API v1"));
 }
 
+// ---- Optional web panel -------------------------------------------------------------------------------------------------------------------
+// When a wwwroot folder with index.html ships next to the app (the UAT package includes the built frontend), the panel is served from the same
+// address as the API, so no CORS and no second server are needed. Nothing changes without that folder (development, tests). PublicListenerGuard
+// runs first, so none of this is reachable on the internet-facing ingest port; /api and /swagger keep their exact behaviour.
+var panelRoot = Path.Combine(AppContext.BaseDirectory, "wwwroot");
+var panelIndex = Path.Combine(panelRoot, "index.html");
+var servePanel = File.Exists(panelIndex);
+if (servePanel)
+{
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(panelRoot),
+        OnPrepareResponse = c =>
+            c.Context.Response.Headers.CacheControl = (c.Context.Request.Path.Value ?? "").StartsWith("/assets/", StringComparison.OrdinalIgnoreCase)
+                ? "public, max-age=31536000, immutable"       // hashed file names: safe to cache for a year
+                : "no-cache",                                   // index.html, images: revalidate
+    });
+}
+
 app.MapControllers();
+
+if (servePanel)
+{
+    // Single-page app: any other browser URL (/readings, /shelly, ...) gets index.html and the router takes over. API and Swagger paths are never rewritten.
+    app.MapFallback(async ctx =>
+    {
+        var p = ctx.Request.Path;
+        if (p.StartsWithSegments("/api") || p.StartsWithSegments("/swagger") || !(HttpMethods.IsGet(ctx.Request.Method) || HttpMethods.IsHead(ctx.Request.Method)))
+        {
+            ctx.Response.StatusCode = StatusCodes.Status404NotFound;       // the status-code pages middleware adds the standard JSON error body
+            return;
+        }
+        ctx.Response.Headers.CacheControl = "no-cache";
+        ctx.Response.ContentType = "text/html; charset=utf-8";
+        await ctx.Response.SendFileAsync(panelIndex);
+    });
+}
 
 // ---- Startup: SuperAdmin bootstrap. Schema migrations are NOT applied here (use `VayuVata --migrate`). ----
 using (var scope = app.Services.CreateScope())
