@@ -159,6 +159,212 @@ namespace VayuVata.Migrations
                     b.ToTable("AdminVideoConfiguration", (string)null);
                 });
 
+            modelBuilder.Entity("VayuVata.Models.Alert", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("AlertType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(30)");
+
+                    b.Property<decimal?>("Baseline")
+                        .HasPrecision(10, 2)
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<DateTime?>("CriticalAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<string>("Detail")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<string>("DeviceCode")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasColumnName("device_id");
+
+                    b.Property<DateTime?>("LastNotifiedAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<DateTime>("LastSeenAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<DateTime?>("ResolvedAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<DateTime>("StartedAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(10)");
+
+                    b.Property<decimal?>("Value")
+                        .HasPrecision(10, 2)
+                        .HasColumnType("decimal(10,2)");
+
+                    b.Property<DateTime?>("WarningAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DeviceCode", "AlertType")
+                        .IsUnique()
+                        .HasDatabaseName("UX_Alerts_open")
+                        .HasFilter("[Status] <> 'Resolved'");
+
+                    b.HasIndex("Status", "StartedAt")
+                        .HasDatabaseName("IX_Alerts_status");
+
+                    b.ToTable("Alerts", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_Alerts_Status", "[Status] IN ('Normal','Warning','Critical','Resolved')");
+                        });
+                });
+
+            modelBuilder.Entity("VayuVata.Models.AlertConfiguration", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("AqiChangePercent")
+                        .HasPrecision(7, 2)
+                        .HasColumnType("decimal(7,2)");
+
+                    b.Property<decimal>("AqiMinChange")
+                        .HasPrecision(7, 2)
+                        .HasColumnType("decimal(7,2)");
+
+                    b.Property<int>("BaselineDays")
+                        .HasColumnType("int");
+
+                    b.Property<int>("BinIntervalDays")
+                        .HasColumnType("int");
+
+                    b.Property<int>("CriticalAfterHours")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("EmailEnabled")
+                        .HasColumnType("bit");
+
+                    b.Property<int>("FilterIntervalDays")
+                        .HasColumnType("int");
+
+                    b.Property<int>("MaintenanceCriticalOverdueDays")
+                        .HasColumnType("int");
+
+                    b.Property<int>("MaintenanceRepeatDays")
+                        .HasColumnType("int");
+
+                    b.Property<int>("MaintenanceWarnDaysBefore")
+                        .HasColumnType("int");
+
+                    b.Property<int>("MinBaselineSamples")
+                        .HasColumnType("int");
+
+                    b.Property<int>("OfflineAfterMinutes")
+                        .HasColumnType("int");
+
+                    b.Property<int>("OuterMissingPercent")
+                        .HasColumnType("int");
+
+                    b.Property<int>("RecentWindowMinutes")
+                        .HasColumnType("int");
+
+                    b.Property<int>("ResolveGraceMinutes")
+                        .HasColumnType("int");
+
+                    b.Property<decimal>("TempChangeDegrees")
+                        .HasPrecision(5, 2)
+                        .HasColumnType("decimal(5,2)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("UpdatedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<int>("WarningAfterHours")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("AlertConfiguration", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_AlertConfiguration_single", "[Id] = 1");
+                        });
+                });
+
+            modelBuilder.Entity("VayuVata.Models.AlertEvent", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<int>("AlertId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("AlertType")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(30)");
+
+                    b.Property<DateTime>("At")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<string>("Category")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<string>("Detail")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<string>("DeviceCode")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasColumnName("device_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(12)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AlertId");
+
+                    b.HasIndex("At")
+                        .HasDatabaseName("IX_AlertEvents_at");
+
+                    b.HasIndex("DeviceCode", "At")
+                        .HasDatabaseName("IX_AlertEvents_device");
+
+                    b.ToTable("AlertEvents", (string)null);
+                });
+
             modelBuilder.Entity("VayuVata.Models.Device", b =>
                 {
                     b.Property<int>("Id")
@@ -248,6 +454,30 @@ namespace VayuVata.Migrations
                     b.HasIndex("UserId", "IsActive");
 
                     b.ToTable("DeviceAssignments", (string)null);
+                });
+
+            modelBuilder.Entity("VayuVata.Models.DeviceMaintenance", b =>
+                {
+                    b.Property<string>("DeviceCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasColumnName("device_id");
+
+                    b.Property<DateTime?>("BinCleanedAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<DateTime?>("FilterChangedAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("UpdatedByUserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("DeviceCode");
+
+                    b.ToTable("DeviceMaintenance", (string)null);
                 });
 
             modelBuilder.Entity("VayuVata.Models.DeviceStationMapping", b =>
@@ -1486,6 +1716,29 @@ namespace VayuVata.Migrations
                     b.Navigation("AdminUser");
                 });
 
+            modelBuilder.Entity("VayuVata.Models.Alert", b =>
+                {
+                    b.HasOne("VayuVata.Models.Device", "Device")
+                        .WithMany()
+                        .HasForeignKey("DeviceCode")
+                        .HasPrincipalKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Device");
+                });
+
+            modelBuilder.Entity("VayuVata.Models.AlertEvent", b =>
+                {
+                    b.HasOne("VayuVata.Models.Alert", "Alert")
+                        .WithMany()
+                        .HasForeignKey("AlertId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Alert");
+                });
+
             modelBuilder.Entity("VayuVata.Models.DeviceAssignment", b =>
                 {
                     b.HasOne("VayuVata.Models.User", "AssignedBy")
@@ -1511,6 +1764,18 @@ namespace VayuVata.Migrations
                     b.Navigation("Device");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("VayuVata.Models.DeviceMaintenance", b =>
+                {
+                    b.HasOne("VayuVata.Models.Device", "Device")
+                        .WithMany()
+                        .HasForeignKey("DeviceCode")
+                        .HasPrincipalKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Device");
                 });
 
             modelBuilder.Entity("VayuVata.Models.DeviceStationMapping", b =>

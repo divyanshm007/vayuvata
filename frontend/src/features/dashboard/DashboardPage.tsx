@@ -22,6 +22,7 @@ import { toSeries, C } from '../analytics/charts';
 import { fmtNum, fmtWallClock, isRecentlyReporting, parseApiDate } from '../../utils/format';
 import { useTempView } from '../../utils/temperature';
 import { RegistrationLinkCard } from '../registration/RegistrationLinkCard';
+import { AlertsPanel } from '../alerts/AlertsPanel';
 import { aqiCategory } from '../../utils/aqi';
 import { useAsync } from '../../utils/useAsync';
 import { tokens } from '../../theme/theme';
@@ -122,6 +123,8 @@ export default function DashboardPage() {
           : r === 'Admin' ? 'Air quality across the users and devices you manage.' : 'Air quality from the devices assigned to you.'}
         actionLabel={r === 'User' ? 'View Latest Readings' : 'View Sensor Readings'} actionTo={r === 'User' ? '/latest' : '/readings'}
       />
+
+      <AlertsPanel />
 
       {r === 'SuperAdmin' && <Box sx={{ mb: 2 }}><RegistrationLinkCard /></Box>}
 

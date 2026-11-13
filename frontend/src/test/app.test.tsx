@@ -19,6 +19,7 @@ vi.mock('../api/services', () => ({
   sensorApi: { latest: vi.fn(), list: vi.fn(), history: vi.fn(), get: vi.fn() },
   healthApi: { get: vi.fn() },
   userMgmtApi: { link: vi.fn().mockResolvedValue({ url: 'http://localhost/register', emailConfigured: true }) },
+  alertsApi: { summary: vi.fn().mockResolvedValue({ normalDevices: 0, warningAlerts: 0, criticalAlerts: 0, resolvedLast7Days: 0, maintenanceOpen: 0, machineErrorsOpen: 0, abnormalReadingsOpen: 0, totalDevices: 0 }), list: vi.fn().mockResolvedValue({ items: [], page: 1, pageSize: 6, totalCount: 0, totalPages: 0, hasNextPage: false }) },
 }));
 
 const empty = { items: [], page: 1, pageSize: 20, totalCount: 0, totalPages: 0, hasNextPage: false };
@@ -85,9 +86,9 @@ describe('unified login and role-based navigation', () => {
   });
 
   it.each([
-    ['SuperAdmin', ['Admin Management', 'User Management', 'Device Assignments', 'Historical Reports'], []],
-    ['Admin', ['My Users', 'Historical Reports', 'Gov Comparison'], ['Admin Management', 'User Management', 'Device Assignments']],
-    ['User', ['My Devices', 'Latest Sensor Readings', 'Reading History', 'Historical Reports', 'Gov Comparison'], ['My Users', 'Admin Management', 'System Health', 'Device Assignments', 'User Management']],
+    ['SuperAdmin', ['Admin Management', 'User Management', 'Device Assignments', 'Historical Reports', 'Alerts', 'Alert Configuration'], []],
+    ['Admin', ['My Users', 'Historical Reports', 'Gov Comparison'], ['Admin Management', 'User Management', 'Device Assignments', 'Alert Configuration']],
+    ['User', ['My Devices', 'Latest Sensor Readings', 'Reading History', 'Historical Reports', 'Gov Comparison'], ['My Users', 'Admin Management', 'System Health', 'Device Assignments', 'User Management', 'Alert Configuration']],
   ] as const)('%s sees only their own navigation (role taken from /auth/me)', async (role, shown, hidden) => {
     renderApp('/login');
     await signIn(role);

@@ -20,6 +20,8 @@ const UserManagementPage = lazy(() => import('../features/registration/UserManag
 const RegisterPage = lazy(() => import('../features/registration/RegisterPage'));
 const ActivatePage = lazy(() => import('../features/registration/ActivatePage'));
 const ShellyPage = lazy(() => import('../features/shelly/ShellyPage'));
+const AlertsPage = lazy(() => import('../features/alerts/AlertsPage'));
+const AlertConfigPage = lazy(() => import('../features/alerts/AlertConfigPage'));
 const VideoManagementPage = lazy(() => import('../features/video/VideoManagementPage'));
 const DeviceConfigurationPage = lazy(() => import('../features/shelly/DeviceConfigurationPage'));
 const HealthPage = lazy(() => import('../features/health/HealthPage'));
@@ -90,6 +92,8 @@ export default function AppRoutes() {
           <Route path="shelly" element={<RequireRole roles={OPS}><ShellyPage /></RequireRole>} />
           <Route path="settings/device-configuration" element={<DeviceConfigurationPage />} />
           <Route path="settings/video-management" element={<VideoManagementPage />} />
+          <Route path="alerts" element={<AlertsPage />} />
+          <Route path="settings/alert-configuration" element={<RequireRole roles={SA}><AlertConfigPage /></RequireRole>} />
           <Route path="health" element={<RequireRole roles={OPS}><HealthPage /></RequireRole>} />
           <Route path="profile" element={<ProfilePage />} />
           <Route path="change-password" element={<ChangePasswordPage />} />

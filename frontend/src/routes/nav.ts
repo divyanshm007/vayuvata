@@ -18,11 +18,15 @@ import LockResetOutlined from '@mui/icons-material/LockResetOutlined';
 import SettingsOutlined from '@mui/icons-material/SettingsOutlined';
 import ManageAccountsOutlined from '@mui/icons-material/ManageAccountsOutlined';
 import VideoLibraryOutlined from '@mui/icons-material/VideoLibraryOutlined';
+import NotificationsActiveOutlined from '@mui/icons-material/NotificationsActiveOutlined';
+import TuneOutlined from '@mui/icons-material/TuneOutlined';
 import type { Role } from '../types/api';
 
 export interface NavItem { label: string; to: string; icon: SvgIconComponent; end?: boolean }
 
 const settings: NavItem = { label: 'Device Configuration', to: '/settings/device-configuration', icon: SettingsOutlined };
+const alertsNav: NavItem = { label: 'Alerts', to: '/alerts', icon: NotificationsActiveOutlined };
+const alertConfig: NavItem = { label: 'Alert Configuration', to: '/settings/alert-configuration', icon: TuneOutlined };
 const videos: NavItem = { label: 'Video Management', to: '/settings/video-management', icon: VideoLibraryOutlined };
 
 const profile: NavItem[] = [
@@ -45,6 +49,8 @@ export const NAV: Record<Role, NavItem[]> = {
     { label: 'Historical Reports', to: '/reports', icon: AssessmentOutlined },
     { label: 'Gov Comparison', to: '/gov-comparison', icon: CompareArrowsOutlined },
     { label: 'System Health', to: '/health', icon: HealthAndSafetyOutlined },
+    alertsNav,
+    alertConfig,
     settings,
     videos,
     ...profile,
@@ -60,6 +66,7 @@ export const NAV: Record<Role, NavItem[]> = {
     { label: 'Historical Reports', to: '/reports', icon: AssessmentOutlined },
     { label: 'Gov Comparison', to: '/gov-comparison', icon: CompareArrowsOutlined },
     { label: 'System Health', to: '/health', icon: HealthAndSafetyOutlined },
+    alertsNav,
     settings,
     videos,
     ...profile,
@@ -73,6 +80,7 @@ export const NAV: Record<Role, NavItem[]> = {
     { label: 'AQI Analytics', to: '/analytics', icon: InsightsOutlined },
     { label: 'Historical Reports', to: '/reports', icon: AssessmentOutlined },
     { label: 'Gov Comparison', to: '/gov-comparison', icon: CompareArrowsOutlined },
+    alertsNav,
     settings,
     videos,
     ...profile,

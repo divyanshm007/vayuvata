@@ -30,6 +30,10 @@ public class VayuVataDbContext(DbContextOptions<VayuVataDbContext> options) : Db
     public DbSet<AdminVideoConfiguration> AdminVideoConfigurations => Set<AdminVideoConfiguration>();
     public DbSet<VideoPlaybackStatus> VideoPlaybackStatuses => Set<VideoPlaybackStatus>();
     public DbSet<VideoCommandHistory> VideoCommandHistories => Set<VideoCommandHistory>();
+    public DbSet<AlertConfiguration> AlertConfigurations => Set<AlertConfiguration>();
+    public DbSet<DeviceMaintenance> DeviceMaintenances => Set<DeviceMaintenance>();
+    public DbSet<Alert> Alerts => Set<Alert>();
+    public DbSet<AlertEvent> AlertEvents => Set<AlertEvent>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
         => modelBuilder.ApplyConfigurationsFromAssembly(typeof(VayuVataDbContext).Assembly);

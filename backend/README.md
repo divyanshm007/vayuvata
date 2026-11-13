@@ -377,3 +377,13 @@ Admins and the Super Admin upload videos per device; the Raspberry Pi fetches th
 - **Playback order**: 1 subscription active (between From and To), 2 not forced OFF by the Super Admin, 3 playback ON, 4 an active video exists. For an Admin, the control permission is checked right after the subscription. Expiry blocks upload and playback for everyone and stops the Pi's stream immediately; after a renewal playback stays OFF until turned ON.
 - **Upload**: multipart, streamed to disk, size (`Video:MaxSizeMb`, default 500) and format (.mp4 .m4v .mov .webm .mkv, content checked) validated. An Admin's upload is emailed to the Super Admin.
 - **Raspberry Pi** (device key `X-Device-Key`): `GET /api/v1/device-video/active?deviceId=` (allowed? + signed 15-minute URL), `GET /api/v1/device-video/stream/{id}?deviceId&exp&sig` (Range supported, re-checked on every request), `POST /api/v1/device-video/status`. Only these three are reachable on the internet-facing port.
+
+## Alerts and maintenance (Dashboard, Alerts, Settings -> Alert Configuration)
+
+Three categories, kept separate: **Maintenance** (filter replacement every 45 days, bin cleaning every 90 days; Warning before the due date, Critical when overdue), **Machine errors** (device offline, outer sensor not delivering) and **Abnormal readings** (AQI or temperature far from the previous 5-day average). Statuses: Normal (watching), Warning, Critical, Resolved.
+
+- **Abnormal readings**: the average of the last hour (default) is compared with the average of the previous 5 days. When the change lasts 7 hours a Warning goes to the Super Admin; beyond 24 hours it becomes Critical and also goes to the Admin and the User. It is Resolved after it stayed normal for the grace time; a deviation that clears before 7 hours leaves no alert.
+- **Who is emailed**: Maintenance and machine errors: Super Admin + the Admin of the device. Abnormal Warning: Super Admin only. Abnormal Critical: Super Admin, Admin and User. Resolved: everyone who was told. Alerts are also shown on the dashboard.
+- **Who sees what**: Super Admin all; Admin their devices (abnormal readings once escalated); User only escalated abnormal readings of their devices. Maintenance reminders and machine errors are never shown to a User.
+- **Configuration** (Super Admin, `PUT /api/v1/alerts/config`): intervals, thresholds, timings, emails on/off. History: `GET /api/v1/alerts/history` (date and time, device ID, category, type, status). `POST /api/v1/alerts/evaluate` runs a pass now; otherwise it runs every `Alerts:IntervalMinutes` (15). Off in Development (`Alerts:Enabled=false`).
+- Sensor data is only read. Tables: `AlertConfiguration`, `DeviceMaintenance`, `Alerts`, `AlertEvents` (migration `Alerts`, additive).

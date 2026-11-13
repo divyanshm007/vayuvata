@@ -9,6 +9,7 @@ import type {
   RegisterRequest, RegisterResponse, RegistrationRequestDto, ApproveRegistrationRequest, InviteUserRequest, InviteResult, ActivationCheck,
   AccountHistoryItem, EmailLogItem, AdminMapping, RegistrationLink, EmailOutcome,
   VideoOverview, VideoItemDto, VideoHistoryItem, UpdateVideoConfigRequest, AdminVideoSettings,
+  AlertItem, AlertSummary, AlertEventItem, DeviceMaintenance, AlertConfig,
 } from '../types/api';
 
 const data = <T,>(p: Promise<{ data: T }>) => p.then((r) => r.data);
@@ -19,6 +20,17 @@ export const authApi = {
   me: () => data(http.get<Profile>('/auth/me')),
   changePassword: (currentPassword: string, newPassword: string) =>
     data(http.post<LoginResponse>('/auth/change-password', { currentPassword, newPassword })),
+};
+
+/** Alerts: maintenance reminders, machine errors and abnormal readings. The server decides what each role may see. */
+export const alertsApi = {
+  list: (q: PageParams & { status?: string; category?: string; deviceId?: string }) => data(http.get<PagedResult<AlertItem>>('/alerts', { params: clean(q) })),
+  summary: () => data(http.get<AlertSummary>('/alerts/summary')),
+  history: (q: PageParams & { status?: string; category?: string; deviceId?: string }) => data(http.get<PagedResult<AlertEventItem>>('/alerts/history', { params: clean(q) })),
+  maintenance: () => data(http.get<DeviceMaintenance[]>('/alerts/maintenance')),
+  done: (deviceId: string, alertType: 'FilterReplacement' | 'BinCleaning') => data(http.post<DeviceMaintenance>(`/alerts/maintenance/${encodeURIComponent(deviceId)}/done`, { alertType })),
+  config: () => data(http.get<AlertConfig>('/alerts/config')),
+  updateConfig: (b: AlertConfig) => data(http.put<AlertConfig>('/alerts/config', b)),
 };
 
 /** Settings -> Video Management. Every rule is enforced by the server; the UI only reflects what it reports. */

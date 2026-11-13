@@ -85,6 +85,9 @@ builder.Services.Configure<RegistrationOptions>(config.GetSection("Registration"
 builder.Services.AddScoped<NotificationService>();
 builder.Services.Configure<VideoOptions>(config.GetSection("Video"));
 builder.Services.AddScoped<VideoService>();
+builder.Services.Configure<AlertOptions>(config.GetSection("Alerts"));
+builder.Services.AddScoped<AlertService>();
+builder.Services.AddHostedService<AlertRunner>();
 builder.Services.AddScoped<RegistrationService>();
 builder.Services.AddHostedService<LocationNameBackgroundService>();
 builder.Services.AddHostedService<GovernmentDataBackgroundService>();

@@ -89,6 +89,23 @@ export interface MappedUser { id: number; name: string; email: string; activatio
 export interface AdminMapping { adminId: number | null; adminName: string; adminEmail: string | null; adminStatus: string | null; users: MappedUser[] }
 export interface RegistrationLink { url: string; emailConfigured: boolean }
 
+// ---- Alerts and maintenance
+export type AlertStatusName = 'Normal' | 'Warning' | 'Critical' | 'Resolved';
+export type AlertCategoryName = 'Maintenance' | 'MachineError' | 'AbnormalReading';
+export interface AlertItem {
+  id: number; deviceId: string; deviceName: string; category: AlertCategoryName; alertType: string; status: AlertStatusName;
+  startedAt: string; warningAt: string | null; criticalAt: string | null; resolvedAt: string | null; value: number | null; baseline: number | null; detail: string | null;
+}
+export interface AlertSummary { normalDevices: number; warningAlerts: number; criticalAlerts: number; resolvedLast7Days: number; maintenanceOpen: number; machineErrorsOpen: number; abnormalReadingsOpen: number; totalDevices: number }
+export interface AlertEventItem { id: number; alertId: number; at: string; deviceId: string; category: AlertCategoryName; alertType: string; status: AlertStatusName; detail: string | null }
+export interface MaintenanceItem { alertType: 'FilterReplacement' | 'BinCleaning'; lastDoneAt: string | null; fromRegistration: boolean; dueAt: string; daysLeft: number; status: 'Normal' | 'Warning' | 'Critical' }
+export interface DeviceMaintenance { deviceId: string; deviceName: string; filter: MaintenanceItem; bin: MaintenanceItem }
+export interface AlertConfig {
+  filterIntervalDays: number; binIntervalDays: number; maintenanceWarnDaysBefore: number; maintenanceCriticalOverdueDays: number; maintenanceRepeatDays: number;
+  baselineDays: number; recentWindowMinutes: number; aqiChangePercent: number; aqiMinChange: number; tempChangeDegrees: number; minBaselineSamples: number;
+  warningAfterHours: number; criticalAfterHours: number; resolveGraceMinutes: number; offlineAfterMinutes: number; outerMissingPercent: number; emailEnabled: boolean; updatedAt?: string | null;
+}
+
 // ---- Video management
 export interface VideoSubscription { status: 'Active' | 'NotStarted' | 'Expired' | 'NotSet'; startsAt: string | null; expiresAt: string | null; active: boolean; message: string | null }
 export interface VideoCapabilities { canView: boolean; canUpload: boolean; uploadBlockedReason: string | null; canControlPlayback: boolean; controlMessage: string | null; canConfigure: boolean }
