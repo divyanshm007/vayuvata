@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Alert, Card, CircularProgress, MenuItem, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TableSortLabel, TextField, Button } from '@mui/material';
 import TableViewOutlined from '@mui/icons-material/TableViewOutlined';
+import PictureAsPdfOutlined from '@mui/icons-material/PictureAsPdfOutlined';
 import { sensorApi } from '../../api/services';
 import { AqiBadge, PageHeader, PaginationBar } from '../../components/ui';
 import { EmptyState, ErrorState, TableSkeleton, useToast } from '../../components/feedback';
-import { downloadReadingsXlsx, exportFileName, fetchReadingsForExport, EXPORT_MAX_ROWS } from '../../utils/exportExcel';
+import { downloadReadingsPdf, downloadReadingsXlsx, exportFileName, fetchReadingsForExport, EXPORT_MAX_ROWS } from '../../utils/exportExcel';
 import { errorMessage } from '../../utils/errors';
+import { useTempView } from '../../utils/temperature';
 import { fmtNum, fmtWallClock, toApiDateTime, toApiDateTimeEnd } from '../../utils/format';
 import { useAsync } from '../../utils/useAsync';
 import { useDevices } from '../devices/useDevices';
@@ -32,6 +34,7 @@ export default function ReadingsPage() {
   const [openId, setOpenId] = useState<number | null>(null);
   const toast = useToast();
   const [exporting, setExporting] = useState(false);
+  const { isSA, tempShort } = useTempView();
 
   const invalidRange = !!from && !!to && from > to;
   const s = useAsync(
@@ -42,12 +45,14 @@ export default function ReadingsPage() {
   const sort = (k: Sort) => { if (sortBy === k) setSortDir(sortDir === 'asc' ? 'desc' : 'asc'); else { setSortBy(k); setSortDir('desc'); } setPage(1); };
   const dir = (k: Sort) => (sortBy === k ? sortDir : false);
 
-  const exportExcel = async () => {
+  const exportReadings = async (kind: 'xlsx' | 'pdf') => {
     setExporting(true);
     try {
       const { rows, truncated } = await fetchReadingsForExport({ deviceId: deviceId || undefined, from: toApiDateTime(from), to: toApiDateTimeEnd(to), sortBy, sortDir });
       if (rows.length === 0) { toast('There are no readings to export for these filters.', 'info'); return; }
-      await downloadReadingsXlsx(rows, exportFileName([deviceId || 'all-devices', from ? from.slice(0, 10) : undefined]));
+      const name = exportFileName([deviceId || 'all-devices', from ? from.slice(0, 10) : undefined], kind);
+      if (kind === 'xlsx') await downloadReadingsXlsx(rows, name, isSA);
+      else await downloadReadingsPdf(rows, name, { inner: isSA, title: `${title} · ${deviceId || 'all devices'}`, subtitle: `From ${from || 'the first reading'} to ${to || 'now'} · times are IST` });
       toast(truncated ? `Exported the latest ${rows.length} readings (export is capped at ${EXPORT_MAX_ROWS}).` : `Exported ${rows.length} readings.`, truncated ? 'info' : 'success');
     } catch (e) { toast(errorMessage(e), 'error'); } finally { setExporting(false); }
   };
@@ -56,7 +61,10 @@ export default function ReadingsPage() {
     <>
       <PageHeader title={title} subtitle="Readings from devices in your scope. Times are device local time (IST)."
         crumbs={[{ label: 'Home', to: '/' }, { label: title }]}
-        actions={<Button variant="contained" startIcon={exporting ? <CircularProgress size={16} color="inherit" /> : <TableViewOutlined />} disabled={exporting || invalidRange} onClick={exportExcel}>Export Excel</Button>} />
+        actions={<Stack direction="row" spacing={1}>
+          <Button variant="contained" startIcon={exporting ? <CircularProgress size={16} color="inherit" /> : <TableViewOutlined />} disabled={exporting || invalidRange} onClick={() => void exportReadings('xlsx')}>Export Excel</Button>
+          <Button variant="outlined" startIcon={<PictureAsPdfOutlined />} disabled={exporting || invalidRange} onClick={() => void exportReadings('pdf')}>Export PDF</Button>
+        </Stack>} />
       <Card>
         <Stack direction={{ xs: 'column', md: 'row' }} spacing={1.5} sx={{ p: 2 }} alignItems={{ md: 'center' }}>
           <TextField select label="Device" value={deviceId} onChange={(e) => reset(setDeviceId)(e.target.value)} sx={{ maxWidth: { md: 280 } }}>
@@ -76,7 +84,7 @@ export default function ReadingsPage() {
                 <TableCell sortDirection={dir('aqi')}><TableSortLabel active={sortBy === 'aqi'} direction={sortBy === 'aqi' ? sortDir : 'desc'} onClick={() => sort('aqi')}>AQI</TableSortLabel></TableCell>
                 <TableCell align="right">PM2.5</TableCell><TableCell align="right">PM10</TableCell>
                 <TableCell align="right">NO₂</TableCell><TableCell align="right">SO₂</TableCell><TableCell align="right">CO</TableCell>
-                <TableCell align="right">TVOC</TableCell><TableCell align="right">Temp</TableCell><TableCell align="right">Humidity</TableCell><TableCell align="right">Outer temp</TableCell><TableCell align="right">Outer hum.</TableCell>
+                <TableCell align="right">TVOC</TableCell><TableCell align="right">{tempShort}</TableCell><TableCell align="right">Humidity</TableCell>{isSA && <TableCell align="right">Outer temp</TableCell>}<TableCell align="right">Outer hum.</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -88,7 +96,7 @@ export default function ReadingsPage() {
                   <TableCell align="right">{fmtNum(r.pm25)}</TableCell><TableCell align="right">{fmtNum(r.pm10)}</TableCell>
                   <TableCell align="right">{fmtNum(r.no2Ppm, 3)}</TableCell><TableCell align="right">{fmtNum(r.so2Ppm, 3)}</TableCell>
                   <TableCell align="right">{fmtNum(r.coPpm, 2)}</TableCell><TableCell align="right">{fmtNum(r.tvocPpb, 0)}</TableCell>
-                  <TableCell align="right">{fmtNum(r.temperature)}°C</TableCell><TableCell align="right">{fmtNum(r.humidity)}%</TableCell><TableCell align="right">{fmtNum(r.outerTemperature)}°C</TableCell><TableCell align="right">{fmtNum(r.outerHumidity)}%</TableCell>
+                  <TableCell align="right">{fmtNum(r.temperature)}°C</TableCell><TableCell align="right">{fmtNum(r.humidity)}%</TableCell>{isSA && <TableCell align="right">{fmtNum(r.outerTemperature)}°C</TableCell>}<TableCell align="right">{fmtNum(r.outerHumidity)}%</TableCell>
                 </TableRow>
               ))}
             </TableBody>

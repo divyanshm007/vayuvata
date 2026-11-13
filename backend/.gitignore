@@ -7,3 +7,9 @@ appsettings.Local.json
 Tests/.run/
 .env.uat
 *.bak
+
+# local email outbox (activation links)
+outbox/
+
+# uploaded videos (local)
+App_Data/

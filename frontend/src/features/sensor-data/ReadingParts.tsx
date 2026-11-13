@@ -6,6 +6,7 @@ import { AqiBadge } from '../../components/ui';
 import { ErrorState } from '../../components/feedback';
 import { fmtNum, fmtUtc, fmtWallClock } from '../../utils/format';
 import { useAsync } from '../../utils/useAsync';
+import { useTempView } from '../../utils/temperature';
 
 export const MEASURES: Array<{ key: keyof SensorDataDto; label: string; unit: string; digits?: number }> = [
   { key: 'pm25', label: 'PM2.5', unit: 'µg/m³' }, { key: 'pm10', label: 'PM10', unit: 'µg/m³' },
@@ -34,6 +35,7 @@ export function ReadingDialog({ id, onClose }: { id: number | null; onClose: () 
 }
 
 export function ReadingDetail({ r }: { r: SensorDataDto }) {
+  const { isSA, tempLabel } = useTempView();
   return (
     <Stack spacing={2}>
       <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
@@ -41,10 +43,10 @@ export function ReadingDetail({ r }: { r: SensorDataDto }) {
         <Typography variant="body2" color="text.secondary">{r.deviceId} · {fmtWallClock(r.recordedAt, true)} (device time)</Typography>
       </Stack>
       <Grid container spacing={1.5}>
-        {MEASURES.map((m) => (
+        {MEASURES.filter((m) => isSA || m.key !== 'outerTemperature').map((m) => (
           <Grid item xs={6} sm={4} key={m.key}>
             <Box sx={{ p: 1.5, border: '1px solid', borderColor: 'divider', borderRadius: 2 }}>
-              <Typography variant="caption" color="text.secondary">{m.label}</Typography>
+              <Typography variant="caption" color="text.secondary">{m.key === 'temperature' ? tempLabel : m.label}</Typography>
               <Typography fontWeight={700}>{fmtNum(r[m.key] as number | null, m.digits ?? 1)} <Typography component="span" variant="caption" color="text.secondary">{m.unit}</Typography></Typography>
             </Box>
           </Grid>

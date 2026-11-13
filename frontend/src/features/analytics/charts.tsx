@@ -6,6 +6,7 @@ import type { ReactNode } from 'react';
 import type { SensorDataDto } from '../../types/api';
 import { AQI_LEGEND, aqiCategory } from '../../utils/aqi';
 import { fmtShortTime, fmtWallClock, parseApiDate } from '../../utils/format';
+import { useTempView } from '../../utils/temperature';
 import { EmptyState } from '../../components/feedback';
 
 const AXIS = { fontSize: 11, fill: '#64748b' };
@@ -96,6 +97,7 @@ export function PmChart({ data }: { data: Row[] }) {
 }
 
 export function TempHumChart({ data }: { data: Row[] }) {
+  const { isSA, tempLabel } = useTempView();
   return (
     <Frame data={data}>
       <LineChart data={data} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
@@ -105,9 +107,9 @@ export function TempHumChart({ data }: { data: Row[] }) {
         <YAxis yAxisId="h" orientation="right" tick={AXIS} width={44} unit="%" />
         <Tooltip labelFormatter={tooltipLabel} formatter={(v: number, n: string) => [n.includes('umidity') ? `${v} %` : `${v} °C`, n]} />
         <Legend />
-        <Line yAxisId="t" type="monotone" dataKey="temperature" name="Temperature" stroke={C.temp} strokeWidth={2} dot={false} connectNulls />
+        <Line yAxisId="t" type="monotone" dataKey="temperature" name={tempLabel} stroke={C.temp} strokeWidth={2} dot={false} connectNulls />
         <Line yAxisId="h" type="monotone" dataKey="humidity" name="Humidity" stroke={C.hum} strokeWidth={2} dot={false} connectNulls />
-        <Line yAxisId="t" type="monotone" dataKey="outerTemperature" name="Outer temperature" stroke={C.temp} strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls />
+        {isSA && <Line yAxisId="t" type="monotone" dataKey="outerTemperature" name="Outer temperature" stroke={C.temp} strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls />}
         <Line yAxisId="h" type="monotone" dataKey="outerHumidity" name="Outer humidity" stroke={C.hum} strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls />
       </LineChart>
     </Frame>
@@ -132,10 +134,11 @@ export function DeviceAqiBars({ items }: { items: Array<{ name: string; aqi: num
   );
 }
 
-const UNIT: Record<string, string> = { PM10: ' µg/m³', 'PM2.5': ' µg/m³', Temperature: ' °C', Humidity: ' %', 'Outer temperature': ' °C', 'Outer humidity': ' %' };
+const UNIT: Record<string, string> = { PM10: ' µg/m³', 'PM2.5': ' µg/m³', Temperature: ' °C', 'Inner temperature': ' °C', Humidity: ' %', 'Outer temperature': ' °C', 'Outer humidity': ' %' };
 
 /** AQI, PM2.5 and PM10 on the left axis; temperature and humidity on the right. Real readings only: gaps stay gaps. */
 export function CombinedTrendChart({ data }: { data: Row[] }) {
+  const { isSA, tempLabel } = useTempView();
   const grad = (id: string, color: string) => (
     <linearGradient id={id} x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor={color} stopOpacity={0.28} /><stop offset="1" stopColor={color} stopOpacity={0.02} /></linearGradient>
   );
@@ -156,9 +159,9 @@ export function CombinedTrendChart({ data }: { data: Row[] }) {
         <Area yAxisId="l" type="monotone" dataKey="pm10" name="PM10" stroke={C.pm10} fill="url(#gPm10)" strokeWidth={1.6} dot={false} connectNulls />
         <Area yAxisId="l" type="monotone" dataKey="pm25" name="PM2.5" stroke={C.pm25} fill="url(#gPm25)" strokeWidth={1.6} dot={false} connectNulls />
         <Area yAxisId="l" type="monotone" dataKey="aqi" name="AQI" stroke={C.aqi} fill="url(#gAqi)" strokeWidth={2.2} dot={data.length < 30} connectNulls />
-        <Line yAxisId="r" type="monotone" dataKey="temperature" name="Temperature" stroke={C.temp} strokeWidth={1.8} dot={false} connectNulls />
+        <Line yAxisId="r" type="monotone" dataKey="temperature" name={tempLabel} stroke={C.temp} strokeWidth={1.8} dot={false} connectNulls />
         <Line yAxisId="r" type="monotone" dataKey="humidity" name="Humidity" stroke={C.hum} strokeWidth={1.8} dot={false} connectNulls />
-        <Line yAxisId="r" type="monotone" dataKey="outerTemperature" name="Outer temperature" stroke={C.temp} strokeWidth={1.6} strokeDasharray="5 4" dot={false} connectNulls />
+        {isSA && <Line yAxisId="r" type="monotone" dataKey="outerTemperature" name="Outer temperature" stroke={C.temp} strokeWidth={1.6} strokeDasharray="5 4" dot={false} connectNulls />}
         <Line yAxisId="r" type="monotone" dataKey="outerHumidity" name="Outer humidity" stroke={C.hum} strokeWidth={1.6} strokeDasharray="5 4" dot={false} connectNulls />
       </ComposedChart>
     </Frame>

@@ -11,6 +11,7 @@ import { Cell, Pie, PieChart, ResponsiveContainer } from 'recharts';
 import { tokens } from '../../theme/theme';
 import { aqiCategory } from '../../utils/aqi';
 import { fmtNum, fmtShortTime } from '../../utils/format';
+import { useTempView } from '../../utils/temperature';
 import { sensorApi } from '../../api/services';
 import { useAsync } from '../../utils/useAsync';
 import { EmptyState, ErrorState, TableSkeleton } from '../../components/feedback';
@@ -215,6 +216,7 @@ export function StatusDonut({ total, slices, rows, loading, viewAllTo }: { total
 
 /** The five most recent readings in the caller's scope (backend-scoped GET /sensor-data). */
 export function RecentReadings() {
+  const { isSA, tempShort } = useTempView();
   const s = useAsync(() => sensorApi.list({ sortBy: 'recordedAt', sortDir: 'desc', page: 1, pageSize: 5, includeTotal: false }), []);
   return (
     <Card sx={{ p: 2.25 }}>
@@ -230,7 +232,7 @@ export function RecentReadings() {
           <Table size="small" aria-label="Recent sensor readings" sx={{ '& td, & th': { px: 0.5, py: 0.9, fontSize: 11.5 } }}>
             <TableHead><TableRow>
               <TableCell>Time (IST)</TableCell><TableCell>Device</TableCell><TableCell align="center">AQI</TableCell>
-              <TableCell align="right">PM2.5</TableCell><TableCell align="right">PM10</TableCell><TableCell align="right">Temp</TableCell><TableCell align="right">Hum.</TableCell><TableCell align="right">Out T</TableCell><TableCell align="right">Out H</TableCell>
+              <TableCell align="right">PM2.5</TableCell><TableCell align="right">PM10</TableCell><TableCell align="right">{tempShort}</TableCell><TableCell align="right">Hum.</TableCell>{isSA && <TableCell align="right">Out T</TableCell>}<TableCell align="right">Out H</TableCell>
             </TableRow></TableHead>
             <TableBody>
               {s.data.items.map((r) => {
@@ -241,7 +243,7 @@ export function RecentReadings() {
                     <TableCell sx={{ whiteSpace: 'nowrap' }}>{r.deviceId}</TableCell>
                     <TableCell align="center"><Tooltip title={c.label}><Box component="span" sx={{ display: 'inline-block', minWidth: 30, px: 0.75, py: 0.25, borderRadius: '6px', bgcolor: c.bg, color: c.color, fontWeight: 700 }}>{r.aqi ?? '—'}</Box></Tooltip></TableCell>
                     <TableCell align="right">{fmtNum(r.pm25, 0)}</TableCell><TableCell align="right">{fmtNum(r.pm10, 0)}</TableCell>
-                    <TableCell align="right">{fmtNum(r.temperature)}</TableCell><TableCell align="right">{fmtNum(r.humidity, 0)}</TableCell><TableCell align="right">{fmtNum(r.outerTemperature)}</TableCell><TableCell align="right">{fmtNum(r.outerHumidity, 0)}</TableCell>
+                    <TableCell align="right">{fmtNum(r.temperature)}</TableCell><TableCell align="right">{fmtNum(r.humidity, 0)}</TableCell>{isSA && <TableCell align="right">{fmtNum(r.outerTemperature)}</TableCell>}<TableCell align="right">{fmtNum(r.outerHumidity, 0)}</TableCell>
                   </TableRow>
                 );
               })}

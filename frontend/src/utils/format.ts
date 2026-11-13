@@ -29,6 +29,13 @@ export function fmtShortTime(s: string): string {
   return d ? d.toLocaleString('en-GB', { timeZone: 'UTC', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }) : s;
 }
 
+/** Text shown wherever government data is missing (instead of a bare dash). */
+export const NOT_AVAILABLE = '(Not Available)';
+
+/** Like fmtNum, for values that come from the government feed: "(Not Available)" when there is none. */
+export const fmtGov = (v: number | null | undefined, digits = 1): string =>
+  v === null || v === undefined ? NOT_AVAILABLE : Number(v).toLocaleString('en-IN', { maximumFractionDigits: digits });
+
 export const fmtNum = (v: number | null | undefined, digits = 1): string =>
   v === null || v === undefined ? '—' : Number(v).toLocaleString('en-IN', { maximumFractionDigits: digits });
 

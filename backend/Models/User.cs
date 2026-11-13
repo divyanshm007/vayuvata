@@ -32,6 +32,17 @@ public class User
     /// <summary>While in the future, login is refused (temporary lockout; expires on its own).</summary>
     public DateTime? LockoutUntil { get; set; }
 
+    // ---- registration / approval / activation
+    /// <summary>Mobile number (digits, optional leading +). Null for accounts created before registration existed.</summary>
+    public string? Mobile { get; set; }
+    /// <summary>When the owner proved ownership of the email by using the activation link and chose a password. Null for older accounts and for accounts not yet activated.</summary>
+    public DateTime? EmailConfirmedAt { get; set; }
+    /// <summary>When the Super Admin approved the account (public registration) or created it directly. Null for older accounts.</summary>
+    public DateTime? ApprovedAt { get; set; }
+    public int? ApprovedByUserId { get; set; }
+    /// <summary>Public | Direct (null for older accounts).</summary>
+    public string? Source { get; set; }
+
     public List<DeviceAssignment> Assignments { get; set; } = [];
 }
 

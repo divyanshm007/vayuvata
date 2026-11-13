@@ -54,3 +54,15 @@ describe('toAppError', () => {
     expect(toAppError(new AxiosError('Network Error')).status).toBe(0);
   });
 });
+
+describe('fmtGov (government values)', () => {
+  it('shows (Not Available) instead of a dash when there is no government value', async () => {
+    const { fmtGov, fmtNum, NOT_AVAILABLE } = await import('../utils/format');
+    expect(NOT_AVAILABLE).toBe('(Not Available)');
+    expect(fmtGov(null)).toBe('(Not Available)');
+    expect(fmtGov(undefined, 0)).toBe('(Not Available)');
+    expect(fmtGov(42.456, 1)).toBe('42.5');
+    expect(fmtGov(0)).toBe('0');                       // zero is a value, not "missing"
+    expect(fmtNum(null)).toBe('—');                    // device-side values keep the dash
+  });
+});

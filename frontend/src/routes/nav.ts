@@ -15,9 +15,15 @@ import SpeedOutlined from '@mui/icons-material/SpeedOutlined';
 import HealthAndSafetyOutlined from '@mui/icons-material/HealthAndSafetyOutlined';
 import PersonOutline from '@mui/icons-material/PersonOutline';
 import LockResetOutlined from '@mui/icons-material/LockResetOutlined';
+import SettingsOutlined from '@mui/icons-material/SettingsOutlined';
+import ManageAccountsOutlined from '@mui/icons-material/ManageAccountsOutlined';
+import VideoLibraryOutlined from '@mui/icons-material/VideoLibraryOutlined';
 import type { Role } from '../types/api';
 
 export interface NavItem { label: string; to: string; icon: SvgIconComponent; end?: boolean }
+
+const settings: NavItem = { label: 'Device Configuration', to: '/settings/device-configuration', icon: SettingsOutlined };
+const videos: NavItem = { label: 'Video Management', to: '/settings/video-management', icon: VideoLibraryOutlined };
 
 const profile: NavItem[] = [
   { label: 'My Profile', to: '/profile', icon: PersonOutline },
@@ -27,6 +33,7 @@ const profile: NavItem[] = [
 export const NAV: Record<Role, NavItem[]> = {
   SuperAdmin: [
     { label: 'Dashboard', to: '/', icon: DashboardOutlined, end: true },
+    { label: 'User Management', to: '/user-management', icon: ManageAccountsOutlined },
     { label: 'Users', to: '/users', icon: PeopleOutline },
     { label: 'Admin Management', to: '/admins', icon: AdminPanelSettingsOutlined },
     { label: 'Devices', to: '/devices', icon: SensorsOutlined },
@@ -38,6 +45,8 @@ export const NAV: Record<Role, NavItem[]> = {
     { label: 'Historical Reports', to: '/reports', icon: AssessmentOutlined },
     { label: 'Gov Comparison', to: '/gov-comparison', icon: CompareArrowsOutlined },
     { label: 'System Health', to: '/health', icon: HealthAndSafetyOutlined },
+    settings,
+    videos,
     ...profile,
   ],
   Admin: [
@@ -51,6 +60,8 @@ export const NAV: Record<Role, NavItem[]> = {
     { label: 'Historical Reports', to: '/reports', icon: AssessmentOutlined },
     { label: 'Gov Comparison', to: '/gov-comparison', icon: CompareArrowsOutlined },
     { label: 'System Health', to: '/health', icon: HealthAndSafetyOutlined },
+    settings,
+    videos,
     ...profile,
   ],
   User: [
@@ -62,6 +73,8 @@ export const NAV: Record<Role, NavItem[]> = {
     { label: 'AQI Analytics', to: '/analytics', icon: InsightsOutlined },
     { label: 'Historical Reports', to: '/reports', icon: AssessmentOutlined },
     { label: 'Gov Comparison', to: '/gov-comparison', icon: CompareArrowsOutlined },
+    settings,
+    videos,
     ...profile,
   ],
 };

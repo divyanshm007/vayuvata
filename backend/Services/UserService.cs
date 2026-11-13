@@ -28,7 +28,8 @@ public class UserService(
         ManagerName = u.Manager != null ? u.Manager.Name : null,
         ManagerRole = u.Manager != null ? u.Manager.Role : null,
         AssignmentType = u.Manager == null ? null : (u.Manager.Role == Roles.SuperAdmin ? "Standalone" : "AdminManaged"),
-        IsActive = u.IsActive, CreatedAt = u.CreatedAt, UpdatedAt = u.UpdatedAt, LastLoginAt = u.LastLoginAt,
+        IsActive = u.IsActive, CreatedAt = u.CreatedAt, UpdatedAt = u.UpdatedAt, LastLoginAt = u.LastLoginAt, Mobile = u.Mobile,
+        ActivationStatus = u.IsActive ? "Active" : (u.ApprovedAt != null && u.EmailConfirmedAt == null ? "Pending activation" : "Inactive"),
     });
 
     // ------------------------------------------------------------------ create

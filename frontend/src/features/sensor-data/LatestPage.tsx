@@ -3,11 +3,13 @@ import { Alert, Box, Card, Grid, LinearProgress, Stack, Typography, Button } fro
 import { AqiBadge, PageHeader, ReportingChip } from '../../components/ui';
 import { EmptyState, ErrorState } from '../../components/feedback';
 import { fmtNum, fmtWallClock, isRecentlyReporting } from '../../utils/format';
+import { useTempView } from '../../utils/temperature';
 import { aqiCategory } from '../../utils/aqi';
 import { useDevices } from '../devices/useDevices';
 import { useLatest, MAX_LATEST_DEVICES } from './useLatest';
 
 export default function LatestPage() {
+  const { isSA, tempShort } = useTempView();
   const dev = useDevices();
   const latest = useLatest(dev.devices, !dev.loading);
   const busy = dev.loading || latest.loading;
@@ -38,7 +40,7 @@ export default function LatestPage() {
                 </Stack>
                 {r ? (
                   <Grid container spacing={1}>
-                    {[['PM2.5', r.pm25, 'µg/m³'], ['PM10', r.pm10, 'µg/m³'], ['Temp', r.temperature, '°C'], ['Humidity', r.humidity, '%'], ['Outer temp', r.outerTemperature, '°C'], ['Outer humidity', r.outerHumidity, '%']].map(([k, v, u]) => (
+                    {[['PM2.5', r.pm25, 'µg/m³'], ['PM10', r.pm10, 'µg/m³'], [tempShort, r.temperature, '°C'], ['Humidity', r.humidity, '%'], ...(isSA ? [['Outer temp', r.outerTemperature, '°C']] : []), ['Outer humidity', r.outerHumidity, '%']].map(([k, v, u]) => (
                       <Grid item xs={6} key={k as string}><Typography variant="caption" color="text.secondary">{k as string}</Typography>
                         <Typography fontWeight={600}>{fmtNum(v as number | null)} <Typography component="span" variant="caption" color="text.secondary">{u as string}</Typography></Typography></Grid>
                     ))}

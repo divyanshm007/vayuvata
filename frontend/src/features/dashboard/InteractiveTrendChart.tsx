@@ -10,6 +10,7 @@ import { C, toSeries } from '../analytics/charts';
 import { EmptyState } from '../../components/feedback';
 import { aqiCategory } from '../../utils/aqi';
 import { fmtNum, fmtShortTime, fmtWallClock } from '../../utils/format';
+import { useTempView } from '../../utils/temperature';
 import { tokens } from '../../theme/theme';
 
 type Pt = ReturnType<typeof toSeries>[number];
@@ -37,6 +38,9 @@ const SERIES = [
  * wheel to pan, Ctrl + wheel to zoom. Only real readings are drawn.
  */
 export function InteractiveTrendChart({ data, bucketMinutes = 1 }: { data: Pt[]; bucketMinutes?: number }) {
+  const { isSA, tempLabel, tempShort } = useTempView();
+  // SuperAdmin: inner + outer temperature. Admin / User: one temperature (the outer one).
+  const series = SERIES.filter((s) => isSA || s.key !== 'outerTemperature').map((s) => (s.key === 'temperature' ? { ...s, label: tempShort } : s));
   const n = data.length;
   const initialSpan = Math.min(DEFAULT_SPAN, n);
   const [span, setSpan] = useState(initialSpan);
@@ -129,7 +133,7 @@ export function InteractiveTrendChart({ data, bucketMinutes = 1 }: { data: Pt[];
             <Typography sx={{ fontSize: 10.5, color: tokens.muted, lineHeight: 1.1 }}>{hoverT !== null ? 'At cursor' : 'Latest in view'} · IST</Typography>
             <Typography sx={{ fontSize: 13, fontWeight: 700, lineHeight: 1.3 }}>{active ? fmtWallClock(active.recordedAt, true) : '—'}</Typography>
           </Box>
-          {SERIES.map((s) => {
+          {series.map((s) => {
             const v = active ? (active[s.key] as number | null) : null;
             const aqi = s.key === 'aqi';
             return (
@@ -171,10 +175,10 @@ export function InteractiveTrendChart({ data, bucketMinutes = 1 }: { data: Pt[];
             <Line yAxisId="l" type="monotone" dataKey="pm10" name="PM10" stroke={C.pm10} strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" dot={view.length <= 40 ? { r: 2.2, strokeWidth: 0 } : false} connectNulls isAnimationActive={false} />
             <Line yAxisId="l" type="monotone" dataKey="pm25" name="PM2.5" stroke={C.pm25} strokeWidth={1.9} strokeLinecap="round" strokeLinejoin="round" dot={view.length <= 40 ? { r: 2.2, strokeWidth: 0 } : false} connectNulls isAnimationActive={false} />
             <Area yAxisId="l" type="monotone" dataKey="aqi" name="AQI" stroke={C.aqi} strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" fill="url(#aqiFill)" dot={view.length <= 40 ? { r: 2.2, strokeWidth: 0 } : false} connectNulls isAnimationActive={false} />
-            <Line yAxisId="r" type="monotone" dataKey="temperature" name="Temperature" stroke={C.temp} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" dot={view.length <= 40 ? { r: 2.2, strokeWidth: 0 } : false} connectNulls isAnimationActive={false} />
+            <Line yAxisId="r" type="monotone" dataKey="temperature" name={tempLabel} stroke={C.temp} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" dot={view.length <= 40 ? { r: 2.2, strokeWidth: 0 } : false} connectNulls isAnimationActive={false} />
             <Line yAxisId="r" type="monotone" dataKey="humidity" name="Humidity" stroke={C.hum} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" dot={view.length <= 40 ? { r: 2.2, strokeWidth: 0 } : false} connectNulls isAnimationActive={false} />
             {hoverT !== null && <ReferenceLine yAxisId="l" x={hoverT} stroke="#334e43" strokeDasharray="4 3" strokeWidth={1} />}
-            {hoverT !== null && active && SERIES.map((s) => {
+            {hoverT !== null && active && series.map((s) => {
               const v = active[s.key] as number | null;
               return v === null ? null : <ReferenceDot key={s.key} yAxisId={s.axis} x={active.t} y={v} r={4} fill={s.color} stroke="#fff" strokeWidth={1.5} ifOverflow="extendDomain" />;
             })}

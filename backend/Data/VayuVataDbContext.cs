@@ -19,6 +19,17 @@ public class VayuVataDbContext(DbContextOptions<VayuVataDbContext> options) : Db
     public DbSet<GovernmentSyncLog> GovernmentSyncLogs => Set<GovernmentSyncLog>();
     public DbSet<ShellyDevice> ShellyDevices => Set<ShellyDevice>();
     public DbSet<ShellyCommand> ShellyCommands => Set<ShellyCommand>();
+    public DbSet<LocationName> LocationNames => Set<LocationName>();
+    public DbSet<RegistrationRequest> RegistrationRequests => Set<RegistrationRequest>();
+    public DbSet<AccountInvitation> AccountInvitations => Set<AccountInvitation>();
+    public DbSet<AccountHistory> AccountHistory => Set<AccountHistory>();
+    public DbSet<EmailLog> EmailLogs => Set<EmailLog>();
+    public DbSet<VideoItem> VideoItems => Set<VideoItem>();
+    public DbSet<DeviceVideoConfiguration> DeviceVideoConfigurations => Set<DeviceVideoConfiguration>();
+    public DbSet<VideoAccessPermission> VideoAccessPermissions => Set<VideoAccessPermission>();
+    public DbSet<AdminVideoConfiguration> AdminVideoConfigurations => Set<AdminVideoConfiguration>();
+    public DbSet<VideoPlaybackStatus> VideoPlaybackStatuses => Set<VideoPlaybackStatus>();
+    public DbSet<VideoCommandHistory> VideoCommandHistories => Set<VideoCommandHistory>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
         => modelBuilder.ApplyConfigurationsFromAssembly(typeof(VayuVataDbContext).Assembly);

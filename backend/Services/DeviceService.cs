@@ -13,15 +13,19 @@ public class DeviceService(
     VayuVataDbContext db,
     IValidator<CreateDeviceRequest> createValidator,
     IValidator<UpdateDeviceRequest> updateValidator,
+    LocationNameService locationNames,
     ILogger<DeviceService> log)
 {
-    private static IQueryable<DeviceDto> Project(IQueryable<Device> q) => q.Select(d => new DeviceDto
+    private IQueryable<DeviceDto> Project(IQueryable<Device> q) => q.Select(d => new DeviceDto
     {
         Id = d.Id, DeviceId = d.DeviceId, DeviceName = d.DeviceName, Description = d.Description,
         IsActive = d.IsActive, CreatedAt = d.CreatedAt, UpdatedAt = d.UpdatedAt,
         AssignedUserId = d.Assignments.Where(a => a.IsActive).Select(a => (int?)a.UserId).FirstOrDefault(),
         AssignedUserName = d.Assignments.Where(a => a.IsActive).Select(a => a.User.Name).FirstOrDefault(),
         AssignedAt = d.Assignments.Where(a => a.IsActive).Select(a => (DateTime?)a.AssignedAt).FirstOrDefault(),
+        LastLocation = db.GpsLocationData.Where(g => g.DeviceCode == d.DeviceId && g.HasFix && g.Latitude != null && g.Longitude != null)
+            .OrderByDescending(g => g.RecordedAt)
+            .Select(g => new DeviceLastLocationDto { Latitude = g.Latitude!.Value, Longitude = g.Longitude!.Value, RecordedAt = g.RecordedAt, Source = g.Source }).FirstOrDefault(),
     });
 
     /// <summary>Random device API key, e.g. "vv_Zk3...". Shown to the operator once; only its hash is stored.</summary>
@@ -55,7 +59,7 @@ public class DeviceService(
         return WithKey(await GetAsync(device.Id, caller, ct), raw);
     }
 
-    public Task<PagedResult<DeviceDto>> ListAsync(DeviceQuery q, CurrentUser caller, CancellationToken ct)
+    public async Task<PagedResult<DeviceDto>> ListAsync(DeviceQuery q, CurrentUser caller, CancellationToken ct)
     {
         var query = db.VisibleDevices(caller).AsNoTracking();
         if (q.IsActive != null) query = query.Where(d => d.IsActive == q.IsActive);
@@ -68,12 +72,18 @@ public class DeviceService(
             var s = q.Search.Trim();
             query = query.Where(d => d.DeviceId.Contains(s) || d.DeviceName.Contains(s));
         }
-        return Project(query.OrderBy(d => d.Id)).ToPagedAsync(q, ct);
+        var page = await Project(query.OrderBy(d => d.Id)).ToPagedAsync(q, ct);
+        await locationNames.AttachAsync(page.Items, ct);
+        return page;
     }
 
-    public async Task<DeviceDto> GetAsync(int id, CurrentUser caller, CancellationToken ct) =>
-        await Project(db.VisibleDevices(caller).AsNoTracking().Where(d => d.Id == id)).FirstOrDefaultAsync(ct)
-        ?? throw ApiException.NotFound("Device not found.");
+    public async Task<DeviceDto> GetAsync(int id, CurrentUser caller, CancellationToken ct)
+    {
+        var dto = await Project(db.VisibleDevices(caller).AsNoTracking().Where(d => d.Id == id)).FirstOrDefaultAsync(ct)
+            ?? throw ApiException.NotFound("Device not found.");
+        await locationNames.AttachAsync([dto], ct);
+        return dto;
+    }
 
     public async Task<DeviceDto> UpdateAsync(int id, UpdateDeviceRequest req, CurrentUser caller, CancellationToken ct)
     {
@@ -173,7 +183,9 @@ public class DeviceService(
         if (!await db.VisibleUsers(caller).AnyAsync(u => u.Id == userId, ct))
             throw ApiException.NotFound("User not found.");
         var query = db.Devices.AsNoTracking().Where(d => d.Assignments.Any(a => a.IsActive && a.UserId == userId));
-        return await Project(query.OrderBy(d => d.Id)).ToPagedAsync(page, ct);
+        var result = await Project(query.OrderBy(d => d.Id)).ToPagedAsync(page, ct);
+        await locationNames.AttachAsync(result.Items, ct);
+        return result;
     }
 
     private static DeviceWithKeyDto WithKey(DeviceDto d, string key) => new()

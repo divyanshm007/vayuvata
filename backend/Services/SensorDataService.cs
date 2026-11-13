@@ -24,6 +24,22 @@ public class SensorDataService(
     });
 
     /// <summary>
+    /// Temperature rule: the SuperAdmin sees both the inner and the outer temperature. Admins and Users see ONLY the outer temperature, under the name
+    /// "temperature"; the inner value is replaced here, on the server, so it never reaches them (no UI trick can show it).
+    /// </summary>
+    public static T ForRole<T>(T d, bool superAdmin) where T : SensorDataDto
+    {
+        if (!superAdmin) { d.Temperature = d.OuterTemperature; d.OuterTemperature = null; }
+        return d;
+    }
+
+    private static PagedResult<SensorDataDto> ForRole(PagedResult<SensorDataDto> page, bool superAdmin)
+    {
+        foreach (var d in page.Items) ForRole(d, superAdmin);
+        return page;
+    }
+
+    /// <summary>
     /// Ingests a reading. Auth: X-Device-Key must match the stored hash for req.DeviceId.
     /// Unknown device or bad/missing key -> 401 (same answer, no device enumeration); inactive device -> 403.
     /// </summary>
@@ -81,7 +97,7 @@ public class SensorDataService(
             && CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(provided.Trim().ToLowerInvariant()), stored);
     }
 
-    public Task<PagedResult<SensorDataDto>> QueryAsync(SensorDataQuery q, CurrentUser caller, CancellationToken ct)
+    public async Task<PagedResult<SensorDataDto>> QueryAsync(SensorDataQuery q, CurrentUser caller, CancellationToken ct)
     {
         var query = db.VisibleSensorData(caller).AsNoTracking();
         if (!string.IsNullOrWhiteSpace(q.DeviceId)) query = query.Where(s => s.DeviceCode == q.DeviceId);
@@ -94,19 +110,29 @@ public class SensorDataService(
             "recordedat" => desc ? query.OrderByDescending(s => s.RecordedAt).ThenByDescending(s => s.Id) : query.OrderBy(s => s.RecordedAt).ThenBy(s => s.Id),
             _ => throw ApiException.BadRequest("sortBy must be one of: recordedAt, createdAt, aqi."),
         };
-        return Project(query).ToPagedAsync(q, ct);
+        return ForRole(await Project(query).ToPagedAsync(q, ct), caller.IsSuperAdmin);
     }
 
     public async Task<SensorDataDto> GetAsync(long id, CurrentUser caller, CancellationToken ct) =>
-        await Project(db.VisibleSensorData(caller).AsNoTracking().Where(s => s.Id == id)).FirstOrDefaultAsync(ct)
-        ?? throw ApiException.NotFound("Reading not found.");
+        ForRole(await Project(db.VisibleSensorData(caller).AsNoTracking().Where(s => s.Id == id)).FirstOrDefaultAsync(ct)
+        ?? throw ApiException.NotFound("Reading not found."), caller.IsSuperAdmin);
 
     public async Task<SensorDataDto> LatestAsync(int deviceRecordId, CurrentUser caller, CancellationToken ct)
     {
         var code = await AuthorizedDeviceCodeAsync(deviceRecordId, caller, ct);
-        return await Project(db.ManipulatedSensorData.AsNoTracking().Where(s => s.DeviceCode == code)
+        return ForRole(await Project(db.ManipulatedSensorData.AsNoTracking().Where(s => s.DeviceCode == code)
                    .OrderByDescending(s => s.RecordedAt).ThenByDescending(s => s.Id)).FirstOrDefaultAsync(ct)
-               ?? throw ApiException.NotFound("No readings for this device yet.");
+               ?? throw ApiException.NotFound("No readings for this device yet."), caller.IsSuperAdmin);
+    }
+
+    /// <summary>Newest reading of one device by its physical id (e.g. Vayu_004), for the no-login endpoint. Nothing else about the device is exposed.</summary>
+    public async Task<SensorDataDto> LatestPublicAsync(string deviceId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId) || deviceId.Length > 50 || !deviceId.All(c => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' or ':'))
+            throw ApiException.NotFound("No readings for this device yet.");
+        return ForRole(await Project(db.ManipulatedSensorData.AsNoTracking().Where(s => s.DeviceCode == deviceId)
+                   .OrderByDescending(s => s.RecordedAt).ThenByDescending(s => s.Id)).FirstOrDefaultAsync(ct)
+               ?? throw ApiException.NotFound("No readings for this device yet."), superAdmin: false);   // nobody is logged in: outer temperature only
     }
 
     public async Task<PagedResult<SensorDataDto>> HistoryAsync(int deviceRecordId, HistoryQuery q, CurrentUser caller, CancellationToken ct)
@@ -116,7 +142,7 @@ public class SensorDataService(
         var desc = !string.Equals(q.SortDir, "asc", StringComparison.OrdinalIgnoreCase);
         query = desc ? query.OrderByDescending(s => s.RecordedAt).ThenByDescending(s => s.Id)
                      : query.OrderBy(s => s.RecordedAt).ThenBy(s => s.Id);
-        return await Project(query).ToPagedAsync(q, ct);
+        return ForRole(await Project(query).ToPagedAsync(q, ct), caller.IsSuperAdmin);
     }
 
     /// <summary>
@@ -136,6 +162,7 @@ public class SensorDataService(
         if (stats.Count <= max)
         {
             var raw = await Project(query.OrderBy(s => s.RecordedAt).ThenBy(s => s.Id)).ToListAsync(ct);
+            foreach (var p in raw) ForRole(p, caller.IsSuperAdmin);
             return new SensorSeriesResult { Points = raw, BucketMinutes = 1, TotalReadings = stats.Count };
         }
 
@@ -165,6 +192,7 @@ public class SensorDataService(
                 Humidity = R(r.Hum), Temperature = R(r.Temp), OuterTemperature = R(r.OTemp), OuterHumidity = R(r.OHum),
             };
         }).ToList();
+        foreach (var p in points) ForRole(p, caller.IsSuperAdmin);
         return new SensorSeriesResult { Points = points, BucketMinutes = bucket, TotalReadings = stats.Count };
     }
 

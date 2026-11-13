@@ -52,6 +52,41 @@ builder.Services.Configure<ShellyOptions>(config.GetSection("Shelly"));
 // RemoveAllLoggers: the Shelly status call carries the auth key in its URL, so request URLs must never reach the log.
 builder.Services.AddHttpClient("shelly", c => { c.Timeout = TimeSpan.FromSeconds(15); }).RemoveAllLoggers();
 builder.Services.AddScoped<ShellyService>();
+builder.Services.AddHostedService<ShellyScheduleRunner>();
+builder.Services.Configure<LocationNameOptions>(config.GetSection("LocationNames"));
+builder.Services.AddHttpClient("nominatim", c => { c.Timeout = TimeSpan.FromSeconds(10); }).RemoveAllLoggers()
+    // Try IPv4 first: on networks where IPv6 is advertised but not routed, the default connect waits for the IPv6 attempt and times out.
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+    {
+        ConnectCallback = async (ctx, ct) =>
+        {
+            var addresses = (await System.Net.Dns.GetHostAddressesAsync(ctx.DnsEndPoint.Host, ct))
+                .OrderBy(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork ? 0 : 1).ToArray();
+            Exception? last = null;
+            foreach (var a in addresses)
+            {
+                var socket = new System.Net.Sockets.Socket(a.AddressFamily, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp) { NoDelay = true };
+                try
+                {
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    cts.CancelAfter(TimeSpan.FromSeconds(4));
+                    await socket.ConnectAsync(new System.Net.IPEndPoint(a, ctx.DnsEndPoint.Port), cts.Token);
+                    return new System.Net.Sockets.NetworkStream(socket, ownsSocket: true);
+                }
+                catch (Exception ex) { socket.Dispose(); last = ex; if (ct.IsCancellationRequested) throw; }
+            }
+            throw last ?? new HttpRequestException("No address found for " + ctx.DnsEndPoint.Host);
+        },
+    });
+builder.Services.AddScoped<LocationNameService>();
+builder.Services.Configure<EmailOptions>(config.GetSection("Email"));
+builder.Services.AddScoped<IEmailSender, EmailSender>();
+builder.Services.Configure<RegistrationOptions>(config.GetSection("Registration"));
+builder.Services.AddScoped<NotificationService>();
+builder.Services.Configure<VideoOptions>(config.GetSection("Video"));
+builder.Services.AddScoped<VideoService>();
+builder.Services.AddScoped<RegistrationService>();
+builder.Services.AddHostedService<LocationNameBackgroundService>();
 builder.Services.AddHostedService<GovernmentDataBackgroundService>();
 
 // ---- Database ----
@@ -124,6 +159,14 @@ builder.Services.AddRateLimiter(o =>
         _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = config.GetValue("RateLimiting:LoginPermitLimit", 10),
+            Window = TimeSpan.FromMinutes(1), QueueLimit = 0,
+        }));
+    // No-login "latest reading" endpoint: bounded per client IP.
+    o.AddPolicy("public-read", ctx => RateLimitPartition.GetFixedWindowLimiter(
+        ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = config.GetValue("RateLimiting:PublicReadPermitPerMinute", 60),
             Window = TimeSpan.FromMinutes(1), QueueLimit = 0,
         }));
     // Public ESP32 ingestion: bounded per client IP so unauthenticated traffic cannot hammer the database.

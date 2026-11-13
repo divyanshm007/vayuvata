@@ -79,6 +79,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
+/** Like useAuth, but null outside the provider. */
+export function useMaybeAuth(): AuthState | null { return useContext(Ctx); }
+
 export function useAuth(): AuthState {
   const c = useContext(Ctx);
   if (!c) throw new Error('useAuth must be used inside AuthProvider');

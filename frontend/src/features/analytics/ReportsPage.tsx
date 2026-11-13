@@ -2,25 +2,28 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Card, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, CircularProgress } from '@mui/material';
 import DownloadIcon from '@mui/icons-material/Download';
 import TableViewOutlined from '@mui/icons-material/TableViewOutlined';
+import PictureAsPdfOutlined from '@mui/icons-material/PictureAsPdfOutlined';
 import { sensorApi } from '../../api/services';
 import { AqiBadge, PageHeader, PaginationBar } from '../../components/ui';
 import { EmptyState, ErrorState, TableSkeleton, useToast } from '../../components/feedback';
 import { useDevices } from '../devices/useDevices';
 import { DeviceSelect, HISTORY_PRESETS, RangePicker, useRange } from './useSeries';
-import { downloadReadingsXlsx, exportFileName, fetchReadingsForExport, EXPORT_MAX_ROWS } from '../../utils/exportExcel';
+import { downloadReadingsPdf, downloadReadingsXlsx, exportFileName, fetchReadingsForExport, EXPORT_MAX_ROWS } from '../../utils/exportExcel';
 import { fmtNum, fmtWallClock, toApiDateTime, toApiDateTimeEnd } from '../../utils/format';
 import { useAsync } from '../../utils/useAsync';
 import { errorMessage } from '../../utils/errors';
 import { MEASURES } from '../sensor-data/ReadingParts';
+import { useTempView } from '../../utils/temperature';
 import type { SensorDataDto } from '../../types/api';
 
-function toCsv(rows: SensorDataDto[]): string {
-  const head = ['deviceId', 'recordedAt', 'aqi', 'aqiStatus', ...MEASURES.map((m) => m.key)];
+function toCsv(rows: SensorDataDto[], isSA: boolean): string {
+  const head = ['deviceId', 'recordedAt', 'aqi', 'aqiStatus', ...MEASURES.map((m) => m.key).filter((k) => isSA || k !== 'outerTemperature')];
   const esc = (v: unknown) => { const s = v === null || v === undefined ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   return [head.join(','), ...rows.map((r) => head.map((k) => esc((r as unknown as Record<string, unknown>)[k])).join(','))].join('\n');
 }
 
 export default function ReportsPage() {
+  const { isSA, tempShort } = useTempView();
   const dev = useDevices();
   const toast = useToast();
   const [range, setRange] = useRange('30d');
@@ -37,15 +40,16 @@ export default function ReportsPage() {
     [device?.id, range.from, range.to, page, pageSize], !!device && !invalid,
   );
 
-  const runExport = async (kind: 'csv' | 'xlsx') => {
+  const runExport = async (kind: 'csv' | 'xlsx' | 'pdf') => {
     setExporting(true);
     try {
       const { rows, truncated } = await fetchReadingsForExport({ deviceId, from: toApiDateTime(range.from), to: toApiDateTimeEnd(range.to), sortBy: 'recordedAt', sortDir: 'desc' });
       if (rows.length === 0) { toast('There are no readings in this period to export.', 'info'); return; }
       const name = exportFileName([deviceId, range.from.slice(0, 10)], kind);
-      if (kind === 'xlsx') await downloadReadingsXlsx(rows, name);
+      if (kind === 'xlsx') await downloadReadingsXlsx(rows, name, isSA);
+      else if (kind === 'pdf') await downloadReadingsPdf(rows, name, { inner: isSA, title: `Historical report · ${deviceId}`, subtitle: `From ${range.from.slice(0, 10)} to ${range.to ? range.to.slice(0, 10) : 'now'} · times are IST` });
       else {
-        const blob = new Blob([toCsv(rows)], { type: 'text/csv;charset=utf-8' });
+        const blob = new Blob([toCsv(rows, isSA)], { type: 'text/csv;charset=utf-8' });
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob); a.download = name; a.click();
         URL.revokeObjectURL(a.href);
@@ -59,6 +63,7 @@ export default function ReportsPage() {
       <PageHeader title="Historical Reports" subtitle="Browse a device's reading history for any period" crumbs={[{ label: 'Home', to: '/' }, { label: 'Historical Reports' }]}
         actions={<Stack direction="row" spacing={1}>
           <Button variant="contained" startIcon={exporting ? <CircularProgress size={16} color="inherit" /> : <TableViewOutlined />} disabled={!device || exporting || invalid} onClick={() => runExport('xlsx')}>Export Excel</Button>
+          <Button variant="outlined" startIcon={<PictureAsPdfOutlined />} disabled={!device || exporting || invalid} onClick={() => runExport('pdf')}>Export PDF</Button>
           <Button variant="outlined" startIcon={<DownloadIcon />} disabled={!device || exporting || invalid} onClick={() => runExport('csv')}>Export CSV</Button>
         </Stack>} />
       {!!dev.error && <ErrorState error={dev.error} onRetry={dev.reload} />}
@@ -75,7 +80,7 @@ export default function ReportsPage() {
               <TableHead><TableRow>
                 <TableCell>Recorded (IST)</TableCell><TableCell>AQI</TableCell><TableCell align="right">PM2.5</TableCell><TableCell align="right">PM10</TableCell>
                 <TableCell align="right">NO₂</TableCell><TableCell align="right">SO₂</TableCell><TableCell align="right">CO</TableCell><TableCell align="right">TVOC</TableCell>
-                <TableCell align="right">Temp</TableCell><TableCell align="right">Humidity</TableCell><TableCell align="right">Outer temp</TableCell><TableCell align="right">Outer hum.</TableCell>
+                <TableCell align="right">{tempShort}</TableCell><TableCell align="right">Humidity</TableCell>{isSA && <TableCell align="right">Outer temp</TableCell>}<TableCell align="right">Outer hum.</TableCell>
               </TableRow></TableHead>
               <TableBody>
                 {s.data?.items.map((r) => (
@@ -84,7 +89,7 @@ export default function ReportsPage() {
                     <TableCell align="right">{fmtNum(r.pm25)}</TableCell><TableCell align="right">{fmtNum(r.pm10)}</TableCell>
                     <TableCell align="right">{fmtNum(r.no2Ppm, 3)}</TableCell><TableCell align="right">{fmtNum(r.so2Ppm, 3)}</TableCell>
                     <TableCell align="right">{fmtNum(r.coPpm, 2)}</TableCell><TableCell align="right">{fmtNum(r.tvocPpb, 0)}</TableCell>
-                    <TableCell align="right">{fmtNum(r.temperature)}°C</TableCell><TableCell align="right">{fmtNum(r.humidity)}%</TableCell><TableCell align="right">{fmtNum(r.outerTemperature)}°C</TableCell><TableCell align="right">{fmtNum(r.outerHumidity)}%</TableCell>
+                    <TableCell align="right">{fmtNum(r.temperature)}°C</TableCell><TableCell align="right">{fmtNum(r.humidity)}%</TableCell>{isSA && <TableCell align="right">{fmtNum(r.outerTemperature)}°C</TableCell>}<TableCell align="right">{fmtNum(r.outerHumidity)}%</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

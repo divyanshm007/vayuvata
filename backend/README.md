@@ -325,3 +325,55 @@ The built frontend (`frontend/dist`) ships inside the UAT package as `wwwroot/` 
 - **Routing:** static files first; `/api` and `/swagger` keep their exact behaviour (unknown API routes stay a JSON 404); any other GET path returns `index.html` (single-page app routes such as `/shelly`). A missing `.js`/`.css` file is a plain 404, never an HTML page.
 - **Internet-facing ingest port (5443):** `PublicListenerGuard` runs first, so the panel, its assets, Swagger and the rest of the API are not reachable there (empty 404); only the device POSTs pass.
 - **Headers for panel pages** (the API keeps its strict `default-src 'none'`, `no-store` and `no-referrer`): CSP `script-src 'self'` (no inline scripts), styles inline + Google Fonts, images from this server + `Panel:ImgSrc` (default `https://tile.openstreetmap.org`; add your tile provider here if you change `VITE_MAP_TILE_URL`), `connect-src 'self'`, no framing; `Referrer-Policy: strict-origin-when-cross-origin` because the OSM tile servers require a Referer; hashed `/assets/*` cached for a year, `index.html` revalidated.
+
+## Shelly Device Configuration (Settings -> Device Configuration)
+
+Every Shelly switch has its own settings (table `dbo.ShellyDevices`): daily ON time, daily OFF time (India time), a schedule on/off flag and the **SuperAdmin override**.
+The Shelly relay powers the whole VayuVata device, so all schedules and manual ON/OFF only ever switch the relay.
+
+| Role | Sees | Can do |
+|---|---|---|
+| SuperAdmin | ON/OFF, power, voltage, current, temperature, Wi-Fi, errors, configuration | everything: switch any time, set the schedule, turn the override on/off (`PUT /api/v1/shelly-devices/{id}/config`) |
+| Admin | ON/OFF only | switch ON/OFF unless the override is on (then `403 control_locked`: "Device control is currently managed by Super Admin.") |
+| User | ON/OFF only | nothing (view only; switching returns 403) |
+
+The server removes the electrical details from the answers for Admin and User; the UI does not merely hide them.
+
+- **Override** is stored in the database and stays until the SuperAdmin disables it. While it is on, the daily schedule of that switch is paused.
+- **Schedule runner** (`ShellyScheduleRunner`, every 30 s): each ON/OFF runs once a day, at most 5 minutes late (`Shelly:Scheduler:CatchUpMinutes`). After a restart or outage, a stale time is skipped, never run late. A failed command is recorded and retried inside the 5 minutes.
+  Off in Development (`Shelly:Scheduler:Enabled=false`) so a laptop never switches a real device; on elsewhere.
+- **Protection**: a switch is never turned ON while the Shelly reports a protection error (overtemp, overpower, ...) or its temperature is at or above `Shelly:MaxSwitchOnTemperatureC` (80). OFF is always allowed. Two commands to the same switch must be at least 2 s apart.
+- **No automatic ON after a power failure**: the server only acts at the configured times. Also set the Shelly's own "power on default" to OFF (Shelly app -> device settings), otherwise the relay itself decides after a power cut.
+- **History**: `dbo.ShellyCommands` records every command (user or "Schedule (automatic)", `Source`, time, result).
+- Database change: migration `ShellyDeviceConfiguration` (additive; script `Database/ShellyDeviceConfig.sql`). No sensor table is touched.
+
+## Registration, approval and email notifications
+
+One public link, `/register`, for Admin and User (Super Admin can never be requested). Every registration is a **request**: no account exists, and nothing can log in, until the Super Admin approves it.
+
+- **Public** (no login, rate limited): `POST /api/v1/registrations` (name, email, mobile, role; a User must give the email of an *approved, active* Admin), `POST /api/v1/auth/activation/check`, `POST /api/v1/auth/activate`.
+- **Super Admin** (`/api/v1/user-management/...`): `requests` (list, `approve`, `reject`), `invite` (create an Admin/User directly: approved at once, no public approval), `users/{id}/resend-invitation`, `admin-mapping`, `history`, `email-log`, `registration-link` (+ `/send` to email the link to any address).
+- **Accounts** are created inactive. The owner sets their own password through a **single-use, expiring** link (`Registration:InvitationHours`, default 72). Only the SHA-256 of the token is stored. Using the link confirms the email address (`EmailConfirmedAt`). Passwords are never emailed. The email address is the login.
+- **Admin-User relationship** is `Users.ManagerId` (existing). An Admin only ever sees their own Users (existing scope rules, unchanged). Devices are assigned with the account and validated (must exist, be active).
+- **History**: `dbo.AccountHistory` (Registered, Approved, Rejected, DirectCreated, InvitationResent, Activated, RegistrationLinkSent). **Email log**: `dbo.EmailLogs` (recipient, subject, outcome; never the body).
+- **Emails** go through one service (`IEmailSender`): Public Admin registration -> applicant + Super Admin; public User registration -> applicant + their Admin + Super Admin; approval -> account owner (activation link) + their Admin (for a User) + Super Admin; direct creation -> invitation to the new account + their Admin (for a User) + Super Admin confirmation.
+
+Configuration (environment variables on the server, never in git):
+
+| Setting | Meaning |
+|---|---|
+| `Email__Provider` | `Smtp` (send), `File` (write each email to `Email__FileDirectory`, for testing) or `None` (nothing is sent, attempts are logged as NotConfigured) |
+| `Email__Host`, `Email__Port`, `Email__UseSsl`, `Email__User`, `Email__Password`, `Email__FromAddress`, `Email__FromName` | the SMTP account |
+| `Registration__PublicBaseUrl` | the panel address used in email links, e.g. `https://72.61.170.214:5081` |
+| `Registration__SuperAdminNotifyEmails__0` ... | optional: send Super Admin notifications to these addresses instead of the Super Admin accounts' own emails |
+
+Database: migration `RegistrationApproval` (additive: new columns on `Users` - Mobile, EmailConfirmedAt, ApprovedAt, ApprovedByUserId, Source - and new tables `RegistrationRequests`, `AccountInvitations`, `AccountHistory`, `EmailLogs`). Existing accounts are untouched and stay active.
+
+## Video management (Settings -> Video Management)
+
+Admins and the Super Admin upload videos per device; the Raspberry Pi fetches the active video through secure URLs. Files are stored under `Video:StorageRoot` (keep it outside the release folder); only paths and details are in the database (`VideoLibrary`, `DeviceVideoConfiguration`, `AdminVideoConfiguration`, `VideoAccessPermission`, `VideoPlaybackStatus`, `VideoCommandHistory`).
+
+- **Settings belong to the Admin (the client)**: the subscription period (From, To), Admin Video Control Permission, force-OFF and the upload / delete / view permissions apply to every device of that Admin (assigned to the Admin or to one of the Admin's Users). A device with no Admin keeps its own settings. A device can also be forced OFF on its own.
+- **Playback order**: 1 subscription active (between From and To), 2 not forced OFF by the Super Admin, 3 playback ON, 4 an active video exists. For an Admin, the control permission is checked right after the subscription. Expiry blocks upload and playback for everyone and stops the Pi's stream immediately; after a renewal playback stays OFF until turned ON.
+- **Upload**: multipart, streamed to disk, size (`Video:MaxSizeMb`, default 500) and format (.mp4 .m4v .mov .webm .mkv, content checked) validated. An Admin's upload is emailed to the Super Admin.
+- **Raspberry Pi** (device key `X-Device-Key`): `GET /api/v1/device-video/active?deviceId=` (allowed? + signed 15-minute URL), `GET /api/v1/device-video/stream/{id}?deviceId&exp&sig` (Range supported, re-checked on every request), `POST /api/v1/device-video/status`. Only these three are reachable on the internet-facing port.

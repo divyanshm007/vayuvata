@@ -59,7 +59,7 @@ function SwitchCard({ sw, canEdit, onEdit, onHistory, onDeleted, onCommanded }: 
       const r = await shellyApi.switch(sw.id, pending);
       toast(`${sw.name}: ${r.message}`, 'success');
       // The cloud accepted the command. No extra request is made (rate limit); show what was sent and let the user press Refresh to confirm.
-      setStatus((prev) => ({ ...(prev ?? { id: sw.id, powerW: null, voltageV: null, currentA: null, temperatureC: null, wifiRssi: null, ssid: null, energyTotalWh: null, cloudUpdatedAt: null, checkedAt: new Date().toISOString() }), online: true, on: pending }));
+      setStatus((prev) => ({ ...(prev ?? { id: sw.id, powerW: null, voltageV: null, currentA: null, temperatureC: null, wifiRssi: null, ssid: null, energyTotalWh: null, cloudUpdatedAt: null, errors: [], checkedAt: new Date().toISOString() }), online: true, on: pending }));
       setCommanded(true); setError(null);
       onCommanded();                                                  // re-read OUR list so "Last command" updates (this does not call the Shelly Cloud)
     } catch (e) { toast(toAppError(e).message, 'error'); }
@@ -70,8 +70,8 @@ function SwitchCard({ sw, canEdit, onEdit, onHistory, onDeleted, onCommanded }: 
   // The buttons follow the real state: once it is known, only the opposite action is offered (ON -> only "Turn OFF", OFF -> only "Turn ON").
   // Before the state has been read (or when the switch is offline or deactivated) neither is offered: press refresh first.
   const known = sw.isActive && online && status?.on != null;
-  const canOn = known && status!.on === false && !busy;
-  const canOff = known && status!.on === true && !busy;
+  const canOn = sw.canControl && known && status!.on === false && !busy;
+  const canOff = sw.canControl && known && status!.on === true && !busy;
   const stateLabel = !sw.isActive ? 'Deactivated' : status === null ? 'Not checked' : !online ? 'Offline' : status.on === null ? 'Unknown' : status.on ? 'ON' : 'OFF';
   const stateColor = !sw.isActive || !online ? 'default' : status?.on ? 'success' : 'warning';
 
@@ -101,7 +101,9 @@ function SwitchCard({ sw, canEdit, onEdit, onHistory, onDeleted, onCommanded }: 
       {status === null && !error && sw.isActive && <Alert severity="info" sx={{ mt: 1.5 }}>The live state is not read automatically. Press the refresh button first: Turn ON / Turn OFF unlock once the state is known.</Alert>}
       {commanded && <Alert severity="success" sx={{ mt: 1.5 }}>Command sent and accepted by the Shelly Cloud. Press refresh to confirm the real state.</Alert>}
 
-      {status && online && !commanded && (
+      {!canEdit && sw.overrideActive && <Alert severity="warning" sx={{ mt: 1.5 }}>Device control is currently managed by Super Admin.</Alert>}
+
+      {canEdit && status && online && !commanded && (
         <Stack direction="row" flexWrap="wrap" gap={3} sx={{ mt: 2 }}>
           <Metric label="Power" value={fmtNum(status.powerW, 1)} unit="W" />
           <Metric label="Voltage" value={fmtNum(status.voltageV, 1)} unit="V" />

@@ -17,6 +17,35 @@ public class ShellyDeviceDto
     public DateTime? LastCommandAt { get; set; }
     public bool? LastCommandOn { get; set; }
     public string? LastCommandBy { get; set; }
+    /// <summary>true while the SuperAdmin override is active (Admins cannot switch, the daily schedule is paused).</summary>
+    public bool OverrideActive { get; set; }
+    /// <summary>true when the CALLER may switch this Shelly now: SuperAdmin always, Admin only without override, User never.</summary>
+    public bool CanControl { get; set; }
+    /// <summary>Daily schedule and override details. SuperAdmin only (null for Admins and Users).</summary>
+    public ShellyConfigDto? Config { get; set; }
+}
+
+public class ShellyConfigDto
+{
+    public bool ScheduleEnabled { get; set; }
+    /// <summary>Daily ON time, India time, "HH:mm".</summary>
+    public string? DailyOnTime { get; set; }
+    /// <summary>Daily OFF time, India time, "HH:mm".</summary>
+    public string? DailyOffTime { get; set; }
+    public bool OverrideActive { get; set; }
+    public DateTime? OverrideSetAt { get; set; }
+    public string? OverrideBy { get; set; }
+    public DateTime? UpdatedAt { get; set; }
+    public string? UpdatedBy { get; set; }
+}
+
+public class UpdateShellyConfigRequest
+{
+    public bool ScheduleEnabled { get; set; }
+    /// <summary>"HH:mm" (India time). Required when the schedule is enabled.</summary>
+    public string? DailyOnTime { get; set; }
+    public string? DailyOffTime { get; set; }
+    public bool OverrideActive { get; set; }
 }
 
 public class CreateShellyRequest
@@ -67,6 +96,8 @@ public class ShellyStatusDto
     public decimal? EnergyTotalWh { get; set; }
     /// <summary>When the cloud last heard from the device (as the cloud reports it).</summary>
     public string? CloudUpdatedAt { get; set; }
+    /// <summary>Protection errors the Shelly reports (overtemp, overpower, ...). SuperAdmin only.</summary>
+    public List<string> Errors { get; set; } = [];
     public DateTime CheckedAt { get; set; }
 }
 
@@ -83,6 +114,9 @@ public class ShellyCommandDto
     public bool TurnOn { get; set; }
     public bool Succeeded { get; set; }
     public string? Error { get; set; }
+    /// <summary>The user, or "Schedule (automatic)" for the daily schedule.</summary>
     public string UserName { get; set; } = "";
+    /// <summary>Manual | Schedule</summary>
+    public string Source { get; set; } = "Manual";
     public DateTime At { get; set; }
 }

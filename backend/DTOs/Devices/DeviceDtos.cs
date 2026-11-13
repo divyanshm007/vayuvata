@@ -75,6 +75,20 @@ public class DeviceDto
     public int? AssignedUserId { get; set; }
     public string? AssignedUserName { get; set; }
     public DateTime? AssignedAt { get; set; }
+    /// <summary>Newest position of the device (latest GPS / cell report that carries coordinates), or null when it never reported one.</summary>
+    public DeviceLastLocationDto? LastLocation { get; set; }
+}
+
+public class DeviceLastLocationDto
+{
+    public decimal Latitude { get; set; }
+    public decimal Longitude { get; set; }
+    /// <summary>When the position was recorded (IST wall-clock, as stored).</summary>
+    public DateTime RecordedAt { get; set; }
+    /// <summary>gps (satellite fix) | cell (approximate tower position)</summary>
+    public string Source { get; set; } = "gps";
+    /// <summary>Place name of the position (area, city, state), when it has been looked up; otherwise null and the coordinates are shown.</summary>
+    public string? Name { get; set; }
 }
 
 /// <summary>Returned once on registration / key rotation. The raw key cannot be retrieved later.</summary>

@@ -22,6 +22,143 @@ namespace VayuVata.Migrations
 
             SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
+            modelBuilder.Entity("VayuVata.Models.AccountHistory", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(30)");
+
+                    b.Property<int?>("ActorUserId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("At")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("Detail")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<int?>("RequestId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("TargetUserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ActorUserId");
+
+                    b.HasIndex("At")
+                        .HasDatabaseName("IX_AccountHistory_at");
+
+                    b.HasIndex("TargetUserId");
+
+                    b.ToTable("AccountHistory", (string)null);
+                });
+
+            modelBuilder.Entity("VayuVata.Models.AccountInvitation", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<int?>("CreatedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime>("ExpiresAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<DateTime?>("RevokedAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(100)");
+
+                    b.Property<DateTime?>("UsedAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique()
+                        .HasDatabaseName("UX_AccountInvitations_token");
+
+                    b.HasIndex("UserId")
+                        .HasDatabaseName("IX_AccountInvitations_user");
+
+                    b.ToTable("AccountInvitations", (string)null);
+                });
+
+            modelBuilder.Entity("VayuVata.Models.AdminVideoConfiguration", b =>
+                {
+                    b.Property<int>("AdminUserId")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("AdminCanDeleteOwn")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<bool>("AdminCanUpload")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<bool>("AdminControlEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<bool>("ForcedOff")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<DateTime?>("SubscriptionExpiresAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<DateTime?>("SubscriptionStartsAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("UpdatedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("UserCanView")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.HasKey("AdminUserId");
+
+                    b.ToTable("AdminVideoConfiguration", (string)null);
+                });
+
             modelBuilder.Entity("VayuVata.Models.Device", b =>
                 {
                     b.Property<int>("Id")
@@ -164,6 +301,103 @@ namespace VayuVata.Migrations
                     b.HasIndex("StationId");
 
                     b.ToTable("DeviceStationMappings", (string)null);
+                });
+
+            modelBuilder.Entity("VayuVata.Models.DeviceVideoConfiguration", b =>
+                {
+                    b.Property<string>("DeviceCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasColumnName("device_id");
+
+                    b.Property<int?>("ActiveVideoId")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("AdminControlEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<bool>("ForcedOff")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<bool>("PlaybackEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<DateTime?>("SubscriptionExpiresAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<DateTime?>("SubscriptionStartsAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("UpdatedByUserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("DeviceCode");
+
+                    b.HasIndex("ActiveVideoId");
+
+                    b.ToTable("DeviceVideoConfiguration", (string)null);
+                });
+
+            modelBuilder.Entity("VayuVata.Models.EmailLog", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("At")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<int?>("RequestId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(15)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(15)");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("Template")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(40)");
+
+                    b.Property<string>("ToEmail")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<int?>("UserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("At")
+                        .HasDatabaseName("IX_EmailLogs_at");
+
+                    b.ToTable("EmailLogs", (string)null);
                 });
 
             modelBuilder.Entity("VayuVata.Models.GovernmentStation", b =>
@@ -372,6 +606,41 @@ namespace VayuVata.Migrations
                         });
                 });
 
+            modelBuilder.Entity("VayuVata.Models.LocationName", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("FetchedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<decimal>("LatKey")
+                        .HasPrecision(8, 4)
+                        .HasColumnType("decimal(8,4)");
+
+                    b.Property<decimal>("LonKey")
+                        .HasPrecision(8, 4)
+                        .HasColumnType("decimal(8,4)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LatKey", "LonKey")
+                        .IsUnique()
+                        .HasDatabaseName("UX_LocationNames_position");
+
+                    b.ToTable("LocationNames", (string)null);
+                });
+
             modelBuilder.Entity("VayuVata.Models.ManipulatedSensorData", b =>
                 {
                     b.Property<long>("ManipulatedId")
@@ -539,6 +808,100 @@ namespace VayuVata.Migrations
                     b.ToTable("RefreshTokens", (string)null);
                 });
 
+            modelBuilder.Entity("VayuVata.Models.RegistrationRequest", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("AdminEmail")
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<int?>("AdminUserId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("ApprovedRole")
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<DateTime?>("DecidedAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("DecidedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("DecisionNote")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("DeviceCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("nvarchar(256)");
+
+                    b.Property<string>("FullName")
+                        .IsRequired()
+                        .HasMaxLength(150)
+                        .HasColumnType("nvarchar(150)");
+
+                    b.Property<string>("Mobile")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<string>("RequestedRole")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(10)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(10)");
+
+                    b.Property<int?>("UserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AdminUserId");
+
+                    b.HasIndex("DecidedByUserId");
+
+                    b.HasIndex("Email")
+                        .IsUnique()
+                        .HasDatabaseName("UX_RegistrationRequests_pending_email")
+                        .HasFilter("[Status] = 'Pending'");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("Status", "CreatedAt")
+                        .HasDatabaseName("IX_RegistrationRequests_status");
+
+                    b.ToTable("RegistrationRequests", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_RegistrationRequests_Role", "[RequestedRole] IN ('Admin','User')");
+
+                            t.HasCheckConstraint("CK_RegistrationRequests_Status", "[Status] IN ('Pending','Approved','Rejected')");
+                        });
+                });
+
             modelBuilder.Entity("VayuVata.Models.SensorData", b =>
                 {
                     b.Property<long>("Id")
@@ -671,13 +1034,21 @@ namespace VayuVata.Migrations
                     b.Property<int>("ShellyDeviceId")
                         .HasColumnType("int");
 
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(12)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(12)")
+                        .HasDefaultValue("Manual");
+
                     b.Property<bool>("Succeeded")
                         .HasColumnType("bit");
 
                     b.Property<bool>("TurnOn")
                         .HasColumnType("bit");
 
-                    b.Property<int>("UserId")
+                    b.Property<int?>("UserId")
                         .HasColumnType("int");
 
                     b.HasKey("Id");
@@ -712,10 +1083,22 @@ namespace VayuVata.Migrations
                         .IsUnicode(false)
                         .HasColumnType("varchar(100)");
 
+                    b.Property<DateTime?>("ConfigUpdatedAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("ConfigUpdatedByUserId")
+                        .HasColumnType("int");
+
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2(3)")
                         .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<TimeOnly?>("DailyOffTime")
+                        .HasColumnType("time(0)");
+
+                    b.Property<TimeOnly?>("DailyOnTime")
+                        .HasColumnType("time(0)");
 
                     b.Property<string>("DeviceCode")
                         .HasMaxLength(64)
@@ -727,10 +1110,32 @@ namespace VayuVata.Migrations
                         .HasColumnType("bit")
                         .HasDefaultValue(true);
 
+                    b.Property<DateOnly?>("LastScheduleOffDate")
+                        .HasColumnType("date");
+
+                    b.Property<DateOnly?>("LastScheduleOnDate")
+                        .HasColumnType("date");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(150)
                         .HasColumnType("nvarchar(150)");
+
+                    b.Property<bool>("OverrideActive")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<DateTime?>("OverrideSetAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("OverrideSetByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("ScheduleEnabled")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
 
                     b.Property<string>("ShellyId")
                         .IsRequired()
@@ -763,6 +1168,12 @@ namespace VayuVata.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<DateTime?>("ApprovedAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("ApprovedByUserId")
+                        .HasColumnType("int");
+
                     b.Property<DateTime>("CreatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("datetime2(3)")
@@ -772,6 +1183,9 @@ namespace VayuVata.Migrations
                         .IsRequired()
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
+
+                    b.Property<DateTime?>("EmailConfirmedAt")
+                        .HasColumnType("datetime2(3)");
 
                     b.Property<int>("FailedLoginCount")
                         .ValueGeneratedOnAdd()
@@ -795,6 +1209,11 @@ namespace VayuVata.Migrations
                     b.Property<int?>("ManagerId")
                         .HasColumnType("int");
 
+                    b.Property<string>("Mobile")
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(150)
@@ -809,6 +1228,11 @@ namespace VayuVata.Migrations
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
+
+                    b.Property<string>("Source")
+                        .HasMaxLength(10)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(10)");
 
                     b.Property<DateTime?>("UpdatedAt")
                         .HasColumnType("datetime2(3)");
@@ -830,6 +1254,236 @@ namespace VayuVata.Migrations
                         });
 
                     b.HasAnnotation("SqlServer:UseSqlOutputClause", false);
+                });
+
+            modelBuilder.Entity("VayuVata.Models.VideoAccessPermission", b =>
+                {
+                    b.Property<string>("DeviceCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasColumnName("device_id");
+
+                    b.Property<bool>("AdminCanDeleteOwn")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<bool>("AdminCanUpload")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(true);
+
+                    b.Property<DateTime?>("UpdatedAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("UpdatedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<bool>("UserCanView")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.HasKey("DeviceCode");
+
+                    b.ToTable("VideoAccessPermission", (string)null);
+                });
+
+            modelBuilder.Entity("VayuVata.Models.VideoCommandHistory", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(20)");
+
+                    b.Property<DateTime>("At")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<string>("Detail")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<string>("DeviceCode")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasColumnName("device_id");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(8)");
+
+                    b.Property<bool>("Success")
+                        .HasColumnType("bit");
+
+                    b.Property<int?>("UserId")
+                        .HasColumnType("int");
+
+                    b.Property<int?>("VideoId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("DeviceCode", "At")
+                        .HasDatabaseName("IX_VideoCommandHistory_device");
+
+                    b.ToTable("VideoCommandHistory", (string)null);
+                });
+
+            modelBuilder.Entity("VayuVata.Models.VideoItem", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("ContentType")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(60)");
+
+                    b.Property<DateTime?>("DeletedAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<int?>("DeletedByUserId")
+                        .HasColumnType("int");
+
+                    b.Property<string>("DeviceCode")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasColumnName("device_id");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
+
+                    b.Property<string>("FilePath")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(200)");
+
+                    b.Property<string>("ProcessingStatus")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(12)");
+
+                    b.Property<string>("Sha256")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(64)");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("StoredFileName")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(80)");
+
+                    b.Property<DateTime>("UploadedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("datetime2(3)")
+                        .HasDefaultValueSql("SYSUTCDATETIME()");
+
+                    b.Property<int>("UploadedByUserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UploadedByUserId");
+
+                    b.HasIndex("DeviceCode", "UploadedAt")
+                        .HasDatabaseName("IX_VideoLibrary_device");
+
+                    b.ToTable("VideoLibrary", (string)null);
+                });
+
+            modelBuilder.Entity("VayuVata.Models.VideoPlaybackStatus", b =>
+                {
+                    b.Property<string>("DeviceCode")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)")
+                        .HasColumnName("device_id");
+
+                    b.Property<string>("Message")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<DateTime>("ReportedAt")
+                        .HasColumnType("datetime2(3)");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .IsUnicode(false)
+                        .HasColumnType("varchar(12)");
+
+                    b.Property<int?>("VideoId")
+                        .HasColumnType("int");
+
+                    b.HasKey("DeviceCode");
+
+                    b.ToTable("VideoPlaybackStatus", (string)null);
+                });
+
+            modelBuilder.Entity("VayuVata.Models.AccountHistory", b =>
+                {
+                    b.HasOne("VayuVata.Models.User", "Actor")
+                        .WithMany()
+                        .HasForeignKey("ActorUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("VayuVata.Models.User", "TargetUser")
+                        .WithMany()
+                        .HasForeignKey("TargetUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Actor");
+
+                    b.Navigation("TargetUser");
+                });
+
+            modelBuilder.Entity("VayuVata.Models.AccountInvitation", b =>
+                {
+                    b.HasOne("VayuVata.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("VayuVata.Models.AdminVideoConfiguration", b =>
+                {
+                    b.HasOne("VayuVata.Models.User", "AdminUser")
+                        .WithMany()
+                        .HasForeignKey("AdminUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("AdminUser");
                 });
 
             modelBuilder.Entity("VayuVata.Models.DeviceAssignment", b =>
@@ -879,6 +1533,25 @@ namespace VayuVata.Migrations
                     b.Navigation("Station");
                 });
 
+            modelBuilder.Entity("VayuVata.Models.DeviceVideoConfiguration", b =>
+                {
+                    b.HasOne("VayuVata.Models.VideoItem", "ActiveVideo")
+                        .WithMany()
+                        .HasForeignKey("ActiveVideoId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("VayuVata.Models.Device", "Device")
+                        .WithMany()
+                        .HasForeignKey("DeviceCode")
+                        .HasPrincipalKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("ActiveVideo");
+
+                    b.Navigation("Device");
+                });
+
             modelBuilder.Entity("VayuVata.Models.GovernmentStationReading", b =>
                 {
                     b.HasOne("VayuVata.Models.GovernmentStation", "Station")
@@ -924,6 +1597,30 @@ namespace VayuVata.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("VayuVata.Models.RegistrationRequest", b =>
+                {
+                    b.HasOne("VayuVata.Models.User", "AdminUser")
+                        .WithMany()
+                        .HasForeignKey("AdminUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("VayuVata.Models.User", "DecidedBy")
+                        .WithMany()
+                        .HasForeignKey("DecidedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("VayuVata.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("AdminUser");
+
+                    b.Navigation("DecidedBy");
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("VayuVata.Models.SensorData", b =>
                 {
                     b.HasOne("VayuVata.Models.Device", "Device")
@@ -947,8 +1644,7 @@ namespace VayuVata.Migrations
                     b.HasOne("VayuVata.Models.User", "User")
                         .WithMany()
                         .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("ShellyDevice");
 
@@ -974,6 +1670,60 @@ namespace VayuVata.Migrations
                         .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("Manager");
+                });
+
+            modelBuilder.Entity("VayuVata.Models.VideoAccessPermission", b =>
+                {
+                    b.HasOne("VayuVata.Models.Device", "Device")
+                        .WithMany()
+                        .HasForeignKey("DeviceCode")
+                        .HasPrincipalKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Device");
+                });
+
+            modelBuilder.Entity("VayuVata.Models.VideoCommandHistory", b =>
+                {
+                    b.HasOne("VayuVata.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("VayuVata.Models.VideoItem", b =>
+                {
+                    b.HasOne("VayuVata.Models.Device", "Device")
+                        .WithMany()
+                        .HasForeignKey("DeviceCode")
+                        .HasPrincipalKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("VayuVata.Models.User", "UploadedBy")
+                        .WithMany()
+                        .HasForeignKey("UploadedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Device");
+
+                    b.Navigation("UploadedBy");
+                });
+
+            modelBuilder.Entity("VayuVata.Models.VideoPlaybackStatus", b =>
+                {
+                    b.HasOne("VayuVata.Models.Device", "Device")
+                        .WithMany()
+                        .HasForeignKey("DeviceCode")
+                        .HasPrincipalKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Device");
                 });
 
             modelBuilder.Entity("VayuVata.Models.Device", b =>

@@ -103,6 +103,9 @@ public class UserDto
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
     public DateTime? LastLoginAt { get; set; }
+    public string? Mobile { get; set; }
+    /// <summary>Active | Pending activation (approved, invitation not used yet) | Inactive (disabled)</summary>
+    public string ActivationStatus { get; set; } = "Active";
 }
 
 /// <summary>Page of Users managed by one Admin (GET /admins/{adminId}/users).</summary>

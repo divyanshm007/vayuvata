@@ -14,6 +14,8 @@ public class PublicListenerGuard(RequestDelegate next, IConfiguration config)
     private readonly string _allowedPath = config.GetValue("PublicListener:AllowedPath", "/api/v1/sensor-data")!;
     /// <summary>Second device-upload endpoint (GPS position reports); same rules: POST only, device key required by the endpoint itself.</summary>
     private const string GpsPath = "/api/v1/gps-data";
+    /// <summary>Raspberry Pi video access: GET active / stream and POST status. Each needs the device key or a signed, expiring link (checked by the endpoint itself).</summary>
+    private const string VideoPrefix = "/api/v1/device-video/";
 
     public Task Invoke(HttpContext ctx)
     {
@@ -22,6 +24,13 @@ public class PublicListenerGuard(RequestDelegate next, IConfiguration config)
         var allowed = HttpMethods.IsPost(ctx.Request.Method)
                       && (string.Equals(ctx.Request.Path.Value, _allowedPath, StringComparison.OrdinalIgnoreCase)
                           || string.Equals(ctx.Request.Path.Value, GpsPath, StringComparison.OrdinalIgnoreCase));
+        var path = ctx.Request.Path.Value ?? "";
+        if (!allowed && path.StartsWith(VideoPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var rest = path[VideoPrefix.Length..];
+            allowed = (HttpMethods.IsGet(ctx.Request.Method) && (rest.Equals("active", StringComparison.OrdinalIgnoreCase) || rest.StartsWith("stream/", StringComparison.OrdinalIgnoreCase)))
+                      || (HttpMethods.IsPost(ctx.Request.Method) && rest.Equals("status", StringComparison.OrdinalIgnoreCase));
+        }
         if (allowed) return next(ctx);
 
         ctx.Response.StatusCode = StatusCodes.Status404NotFound;   // empty body: reveals nothing about the private API

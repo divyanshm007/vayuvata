@@ -24,6 +24,20 @@ public class ShellyOptions
     public int MinSecondsBetweenCommands { get; set; } = 2;
     /// <summary>The Shelly Cloud allows about one request per second per account (auth key); more answers HTTP 429. Calls with the same key are spaced at least this many milliseconds apart.</summary>
     public int MinMillisecondsBetweenCloudCalls { get; set; } = 1100;
+    /// <summary>A switch is never turned ON while the Shelly reports a protection error, or while its own temperature is at or above this (degrees C).</summary>
+    public decimal MaxSwitchOnTemperatureC { get; set; } = 80;
+    public ShellySchedulerOptions Scheduler { get; set; } = new();
+}
+
+public class ShellySchedulerOptions
+{
+    /// <summary>Runs the daily schedules. Off in Development so a laptop never switches a real device; on elsewhere.</summary>
+    public bool Enabled { get; set; } = true;
+    public int IntervalSeconds { get; set; } = 30;
+    /// <summary>A scheduled ON / OFF still runs when this server was down at that moment, but only up to this many minutes late. Later than that it is skipped, so a restart or an outage never switches a device at a surprising time.</summary>
+    public int CatchUpMinutes { get; set; } = 5;
+    /// <summary>The schedule times are India time (UTC+5:30, no daylight saving).</summary>
+    public int UtcOffsetMinutes { get; set; } = 330;
 }
 
 /// <summary>
@@ -53,7 +67,10 @@ public partial class ShellyService(VayuVataDbContext db, IHttpClientFactory http
         {
             s.Id, s.Name, s.ShellyId, s.CloudHost, s.Channel, s.DeviceCode, DeviceName = s.Device != null ? s.Device.DeviceName : null,
             s.IsActive, s.AuthKey, s.CreatedAt,
-            Last = s.Commands.OrderByDescending(x => x.At).Select(x => new { x.At, x.TurnOn, User = x.User.Name }).FirstOrDefault(),
+            s.OverrideActive, s.OverrideSetAt, s.ScheduleEnabled, s.DailyOnTime, s.DailyOffTime, s.ConfigUpdatedAt,
+            OverrideBy = db.Users.Where(u => u.Id == s.OverrideSetByUserId).Select(u => u.Name).FirstOrDefault(),
+            UpdatedBy = db.Users.Where(u => u.Id == s.ConfigUpdatedByUserId).Select(u => u.Name).FirstOrDefault(),
+            Last = s.Commands.OrderByDescending(x => x.At).Select(x => new { x.At, x.TurnOn, User = x.User != null ? x.User.Name : "Schedule (automatic)" }).FirstOrDefault(),
         }).ToListAsync(ct);
         return rows.Select(r => new ShellyDeviceDto
         {
@@ -61,8 +78,17 @@ public partial class ShellyService(VayuVataDbContext db, IHttpClientFactory http
             IsActive = r.IsActive, CreatedAt = r.CreatedAt,
             AuthKeyHint = c.IsSuperAdmin ? Hint(r.AuthKey) : null,        // the full key is never returned; Admins get no hint at all
             LastCommandAt = r.Last?.At, LastCommandOn = r.Last?.TurnOn, LastCommandBy = r.Last?.User,
+            OverrideActive = r.OverrideActive,
+            CanControl = r.IsActive && (c.IsSuperAdmin || (c.IsAdmin && !r.OverrideActive)),
+            Config = !c.IsSuperAdmin ? null : new ShellyConfigDto
+            {
+                ScheduleEnabled = r.ScheduleEnabled, DailyOnTime = Hm(r.DailyOnTime), DailyOffTime = Hm(r.DailyOffTime),
+                OverrideActive = r.OverrideActive, OverrideSetAt = r.OverrideSetAt, OverrideBy = r.OverrideBy, UpdatedAt = r.ConfigUpdatedAt, UpdatedBy = r.UpdatedBy,
+            },
         }).ToList();
     }
+
+    private static string? Hm(TimeOnly? t) => t?.ToString("HH:mm");
 
     private static string Hint(string key) => key.Length <= 4 ? "••••" : "••••" + key[^4..];
 
@@ -262,9 +288,9 @@ public partial class ShellyService(VayuVataDbContext db, IHttpClientFactory http
 
     private static decimal? Dec(JsonElement e, string name) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number && v.TryGetDecimal(out var d) ? d : null;
 
-    public async Task<ShellyStatusDto> StatusAsync(int id, CurrentUser c, CancellationToken ct)
+    /// <summary>Reads the live state from the Shelly Cloud (all fields; callers decide what a role may see).</summary>
+    private async Task<ShellyStatusDto> ReadStatusAsync(ShellyDevice s, CancellationToken ct)
     {
-        var s = await GetVisibleAsync(id, c, ct);
         var url = $"{Base(s)}/device/status?id={Uri.EscapeDataString(s.ShellyId)}&auth_key={Uri.EscapeDataString(s.AuthKey)}";
         using var doc = await CloudAsync(s.AuthKey, cl => cl.GetAsync(url, ct), allowEmptySuccess: false, ct);
         var dto = new ShellyStatusDto { Id = s.Id, CheckedAt = DateTime.UtcNow };
@@ -277,6 +303,8 @@ public partial class ShellyService(VayuVataDbContext db, IHttpClientFactory http
             dto.PowerW = Dec(sw, "apower"); dto.VoltageV = Dec(sw, "voltage"); dto.CurrentA = Dec(sw, "current");
             if (sw.TryGetProperty("temperature", out var t)) dto.TemperatureC = Dec(t, "tC");
             if (sw.TryGetProperty("aenergy", out var ae)) dto.EnergyTotalWh = Dec(ae, "total");
+            if (sw.TryGetProperty("errors", out var er) && er.ValueKind == JsonValueKind.Array)
+                dto.Errors = er.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.String).Select(x => x.GetString()!).ToList();
         }
         if (ds.TryGetProperty("wifi", out var w))
         {
@@ -287,35 +315,166 @@ public partial class ShellyService(VayuVataDbContext db, IHttpClientFactory http
         return dto;
     }
 
-    public async Task<SwitchResultDto> SwitchAsync(int id, bool on, CurrentUser c, CancellationToken ct)
+    /// <summary>Everyone who can see the switch sees ON / OFF. Power, voltage, current, temperature, Wi-Fi and errors are for the SuperAdmin only; they are removed here, on the server.</summary>
+    public async Task<ShellyStatusDto> StatusAsync(int id, CurrentUser c, CancellationToken ct)
     {
         var s = await GetVisibleAsync(id, c, ct);
-        if (!s.IsActive) throw ApiException.Conflict("This switch is deactivated.", "shelly_inactive");
+        var dto = await ReadStatusAsync(s, ct);
+        if (!c.IsSuperAdmin)
+        {
+            dto.PowerW = dto.VoltageV = dto.CurrentA = dto.TemperatureC = dto.EnergyTotalWh = null;
+            dto.WifiRssi = null; dto.Ssid = null; dto.CloudUpdatedAt = null; dto.Errors = [];
+        }
+        return dto;
+    }
 
+    // ------------------------------------------------------------- switching
+
+    public const string ControlLockedMessage = "Device control is currently managed by Super Admin.";
+
+    /// <summary>Manual ON / OFF. SuperAdmin: always. Admin: only while the SuperAdmin override is off. User: never (view only).</summary>
+    public async Task<SwitchResultDto> SwitchAsync(int id, bool on, CurrentUser c, CancellationToken ct)
+    {
+        if (!c.IsSuperAdmin && !c.IsAdmin) throw ApiException.Forbidden();
+        var s = await GetVisibleAsync(id, c, ct);
+        if (!s.IsActive) throw ApiException.Conflict("This switch is deactivated.", "shelly_inactive");
+        if (!c.IsSuperAdmin && s.OverrideActive) throw new ApiException(403, "control_locked", ControlLockedMessage);
+        return await SwitchCoreAsync(s, on, c.Id, "Manual", ct);
+    }
+
+    /// <summary>Sends one ON / OFF to the Shelly Cloud and records it (who, when, result). Used by manual control and by the daily schedule.</summary>
+    private async Task<SwitchResultDto> SwitchCoreAsync(ShellyDevice s, bool on, int? userId, string source, CancellationToken ct)
+    {
         var last = await db.ShellyCommands.Where(x => x.ShellyDeviceId == s.Id).OrderByDescending(x => x.At).Select(x => (DateTime?)x.At).FirstOrDefaultAsync(ct);
         if (last is { } l && (DateTime.UtcNow - l).TotalSeconds < _o.MinSecondsBetweenCommands)
             throw ApiException.TooManyRequests($"Wait {_o.MinSecondsBetweenCommands} seconds between commands to the same switch.", "shelly_cooldown");
 
-        var body = JsonSerializer.Serialize(new { id = s.ShellyId, channel = (int)s.Channel, on, auth_key = s.AuthKey });
         string? error = null;
+        int errorStatus = 502; string errorCode = "shelly_failed";
         try
         {
+            // Electrical / thermal protection: never switch ON while the Shelly reports a protection error or is too hot.
+            if (on)
+            {
+                ShellyStatusDto? st = null;
+                try { st = await ReadStatusAsync(s, ct); } catch (ApiException) { /* unreadable: the switch command below reports the real problem */ }
+                if (st is not null && (st.Errors.Count > 0 || st.TemperatureC >= _o.MaxSwitchOnTemperatureC))
+                {
+                    var why = st.Errors.Count > 0 ? "protection error: " + string.Join(", ", st.Errors) : $"temperature {st.TemperatureC:0.#} °C is too high";
+                    throw new ApiException(409, "shelly_protection", $"Not switched ON - the Shelly reports a {why}.");
+                }
+            }
+            var body = JsonSerializer.Serialize(new { id = s.ShellyId, channel = (int)s.Channel, on, auth_key = s.AuthKey });
             using var doc = await CloudAsync(s.AuthKey, cl => cl.PostAsync($"{Base(s)}/v2/devices/api/set/switch", new StringContent(body, new System.Net.Http.Headers.MediaTypeHeaderValue("application/json")), ct), allowEmptySuccess: true, ct);
         }
-        catch (ApiException ex) { error = ex.Message; }
+        catch (ApiException ex) { error = ex.Message; if (ex.Code == "shelly_protection") { errorStatus = 409; errorCode = ex.Code; } }
 
-        db.ShellyCommands.Add(new ShellyCommand { ShellyDeviceId = s.Id, UserId = c.Id, TurnOn = on, Succeeded = error is null, Error = error is null ? null : error[..Math.Min(300, error.Length)] });
+        db.ShellyCommands.Add(new ShellyCommand { ShellyDeviceId = s.Id, UserId = userId, Source = source, TurnOn = on, Succeeded = error is null, Error = error is null ? null : error[..Math.Min(300, error.Length)] });
         await db.SaveChangesAsync(CancellationToken.None);
-        log.LogInformation("AUDIT shelly switch {ShellyId} ({Device}) turned {State} by user {CallerId}: {Result}", s.ShellyId, s.DeviceCode ?? "-", on ? "ON" : "OFF", c.Id, error ?? "ok");
+        log.LogInformation("AUDIT shelly switch {ShellyId} ({Device}) turned {State} by {Who} [{Source}]: {Result}", s.ShellyId, s.DeviceCode ?? "-", on ? "ON" : "OFF", userId is null ? "schedule" : "user " + userId, source, error ?? "ok");
 
-        if (error is not null) throw new ApiException(502, "shelly_failed", error);
+        if (error is not null) throw new ApiException(errorStatus, errorCode, error);
         return new SwitchResultDto { Ok = true, On = on, Message = on ? "Turned ON." : "Turned OFF." };
     }
 
     public async Task<List<ShellyCommandDto>> CommandsAsync(int id, CurrentUser c, CancellationToken ct)
     {
+        if (!c.IsSuperAdmin && !c.IsAdmin) throw ApiException.Forbidden();
         var s = await GetVisibleAsync(id, c, ct);
         return await db.ShellyCommands.AsNoTracking().Where(x => x.ShellyDeviceId == s.Id).OrderByDescending(x => x.At).Take(20)
-            .Select(x => new ShellyCommandDto { Id = x.Id, TurnOn = x.TurnOn, Succeeded = x.Succeeded, Error = x.Error, UserName = x.User.Name, At = x.At }).ToListAsync(ct);
+            .Select(x => new ShellyCommandDto { Id = x.Id, TurnOn = x.TurnOn, Succeeded = x.Succeeded, Error = x.Error, UserName = x.User != null ? x.User.Name : "Schedule (automatic)", Source = x.Source, At = x.At }).ToListAsync(ct);
     }
+
+    // ----------------------------------------------------- device configuration
+
+    private static TimeOnly? ParseTime(string? v, string label)
+    {
+        if (string.IsNullOrWhiteSpace(v)) return null;
+        if (TimeOnly.TryParseExact(v.Trim(), ["HH:mm", "H:mm", "HH:mm:ss"], System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var t)) return new TimeOnly(t.Hour, t.Minute);
+        throw ApiException.BadRequest($"{label} must be a time like 08:30.", "validation_failed");
+    }
+
+    /// <summary>SuperAdmin only: the daily ON / OFF time and the override of ONE switch. Other switches are not affected.</summary>
+    public async Task<ShellyDeviceDto> UpdateConfigAsync(int id, UpdateShellyConfigRequest req, CurrentUser c, CancellationToken ct)
+    {
+        if (!c.IsSuperAdmin) throw ApiException.Forbidden();
+        var s = await db.ShellyDevices.FirstOrDefaultAsync(x => x.Id == id, ct) ?? throw ApiException.NotFound("Switch not found.");
+        var on = ParseTime(req.DailyOnTime, "Daily ON time");
+        var off = ParseTime(req.DailyOffTime, "Daily OFF time");
+        if (req.ScheduleEnabled)
+        {
+            if (on is null || off is null) throw ApiException.BadRequest("Set both the daily ON time and the daily OFF time, or turn the schedule off.", "validation_failed");
+            if (on == off) throw ApiException.BadRequest("The ON time and the OFF time must be different.", "validation_failed");
+        }
+        // A changed time may run today again (e.g. moved to a later time); an unchanged one keeps its "already ran today" mark.
+        if (on != s.DailyOnTime) s.LastScheduleOnDate = null;
+        if (off != s.DailyOffTime) s.LastScheduleOffDate = null;
+        s.ScheduleEnabled = req.ScheduleEnabled; s.DailyOnTime = on; s.DailyOffTime = off;
+        if (req.OverrideActive != s.OverrideActive) { s.OverrideActive = req.OverrideActive; s.OverrideSetAt = DateTime.UtcNow; s.OverrideSetByUserId = c.Id; }
+        s.ConfigUpdatedAt = DateTime.UtcNow; s.ConfigUpdatedByUserId = c.Id;
+        await db.SaveChangesAsync(ct);
+        log.LogInformation("AUDIT shelly switch {ShellyId} configuration by SuperAdmin {CallerId}: schedule {Enabled} ON {On} OFF {Off}, override {Override}",
+            s.ShellyId, c.Id, s.ScheduleEnabled, Hm(on) ?? "-", Hm(off) ?? "-", s.OverrideActive);
+        return (await ListAsync(c, ct)).First(x => x.Id == s.Id);
+    }
+
+    // ------------------------------------------------------------- daily schedule
+
+    private bool IsDue(TimeOnly now, TimeOnly at, DateOnly? lastRun, DateOnly today) =>
+        lastRun != today && now >= at && (now.ToTimeSpan() - at.ToTimeSpan()).TotalMinutes <= _o.Scheduler.CatchUpMinutes;
+
+    /// <summary>
+    /// Runs the daily ON / OFF of every switch whose schedule is enabled. Called every few seconds by <see cref="ShellyScheduleRunner"/>.
+    /// Each event runs once a day, at most <c>CatchUpMinutes</c> late; a switch under SuperAdmin override is skipped; nothing runs for a stale time after a restart.
+    /// A failed command is recorded and tried again on the next call until the catch-up window closes.
+    /// </summary>
+    public async Task RunScheduleAsync(DateTime utcNow, CancellationToken ct)
+    {
+        var ist = utcNow.AddMinutes(_o.Scheduler.UtcOffsetMinutes);
+        var today = DateOnly.FromDateTime(ist);
+        var now = TimeOnly.FromDateTime(ist);
+        var rows = await db.ShellyDevices.Where(s => s.IsActive && s.ScheduleEnabled && !s.OverrideActive && s.DailyOnTime != null && s.DailyOffTime != null).ToListAsync(ct);
+        foreach (var s in rows)
+        {
+            if (ct.IsCancellationRequested) return;
+            var onDue = IsDue(now, s.DailyOnTime!.Value, s.LastScheduleOnDate, today);
+            var offDue = IsDue(now, s.DailyOffTime!.Value, s.LastScheduleOffDate, today);
+            if (!onDue && !offDue) continue;
+            // If both are due (very close times) only the later one matters: it decides the final state.
+            var turnOn = onDue && (!offDue || s.DailyOnTime > s.DailyOffTime);
+            try
+            {
+                await SwitchCoreAsync(s, turnOn, null, "Schedule", ct);
+                if (turnOn) s.LastScheduleOnDate = today; else s.LastScheduleOffDate = today;
+                if (onDue && offDue) { s.LastScheduleOnDate = today; s.LastScheduleOffDate = today; }
+                await db.SaveChangesAsync(CancellationToken.None);
+            }
+            catch (ApiException ex) { log.LogWarning("Scheduled {State} of shelly switch {ShellyId} failed: {Message}", turnOn ? "ON" : "OFF", s.ShellyId, ex.Message); }
+        }
+    }
+}
+
+/// <summary>Background loop that applies the daily schedules. Does nothing when <c>Shelly:Scheduler:Enabled</c> is false (Development).</summary>
+public class ShellyScheduleRunner(IServiceScopeFactory scopes, IOptions<ShellyOptions> options, ILogger<ShellyScheduleRunner> log) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stop)
+    {
+        var o = options.Value.Scheduler;
+        if (!o.Enabled) { log.LogInformation("Shelly schedule runner is disabled."); return; }
+        log.LogInformation("Shelly schedule runner started (every {Seconds}s, catch-up {Minutes} min).", o.IntervalSeconds, o.CatchUpMinutes);
+        try { await Task.Delay(TimeSpan.FromSeconds(20), stop); } catch (OperationCanceledException) { return; }
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(Math.Max(5, o.IntervalSeconds)));
+        do
+        {
+            try
+            {
+                using var scope = scopes.CreateScope();
+                await scope.ServiceProvider.GetRequiredService<ShellyService>().RunScheduleAsync(DateTime.UtcNow, stop);
+            }
+            catch (OperationCanceledException) when (stop.IsCancellationRequested) { return; }
+            catch (Exception ex) { log.LogError(ex, "Shelly schedule run failed."); }
+        } while (await WaitAsync(timer, stop));
+    }
+
+    private static async Task<bool> WaitAsync(PeriodicTimer t, CancellationToken stop) { try { return await t.WaitForNextTickAsync(stop); } catch (OperationCanceledException) { return false; } }
 }

@@ -1,3 +1,4 @@
+import { LocationCell } from './LocationCell';
 import { useState } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import {
@@ -102,7 +103,7 @@ export default function DevicesPage() {
           <Table size="small" aria-label="Devices">
             <TableHead><TableRow>
               <TableCell>Device</TableCell><TableCell>Device ID</TableCell><TableCell>Status</TableCell><TableCell>Reporting</TableCell>
-              <TableCell>Assigned to</TableCell><TableCell>Last reading</TableCell><TableCell>Latest AQI</TableCell><TableCell align="right">Actions</TableCell>
+              <TableCell>Assigned to</TableCell><TableCell>Location</TableCell><TableCell>Last reading</TableCell><TableCell>Latest AQI</TableCell><TableCell align="right">Actions</TableCell>
             </TableRow></TableHead>
             <TableBody>
               {list.data?.items.map((d) => {
@@ -124,6 +125,7 @@ export default function DevicesPage() {
                     <TableCell><ActiveChip active={d.isActive} /></TableCell>
                     <TableCell>{loadingLatest ? <Skeleton width={80} /> : <ReportingChip known={!!r} reporting={isRecentlyReporting(r?.recordedAt)} />}</TableCell>
                     <TableCell><AssignedChip name={d.assignedUserName} /></TableCell>
+                    <TableCell><LocationCell loc={d.lastLocation} /></TableCell>
                     <TableCell>{loadingLatest ? <Skeleton width={90} /> : fmtWallClock(r?.recordedAt)}</TableCell>
                     <TableCell>{loadingLatest ? <Skeleton width={70} /> : r ? <AqiBadge aqi={r.aqi} status={r.aqiStatus} /> : '—'}</TableCell>
                     <TableCell align="right">

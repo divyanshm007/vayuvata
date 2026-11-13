@@ -9,19 +9,19 @@ namespace VayuVata.Controllers;
 
 /// <summary>
 /// Shelly smart switches (power on/off of a VayuVata device through the Shelly Cloud).
-/// SuperAdmin: registers, edits and sees all switches. Admin: sees and switches only the switches of devices assigned to them or their Users. Users have no access.
+/// SuperAdmin: registers, edits, configures (daily schedule, override) and sees all switches, with the electrical details. Admin: sees and switches (unless the SuperAdmin override is on) only the switches of devices assigned to them or their Users, ON / OFF state only. User: sees the ON / OFF state of the switches of their devices, no control.
 /// </summary>
 [ApiController]
 [Route("api/v1/shelly-devices")]
 [Produces("application/json")]
-[Authorize(Policies.AdminOrAbove)]
+[Authorize(Policies.AnyRole)]
 [ProducesResponseType<ApiError>(401)]
 [ProducesResponseType<ApiError>(403)]
 public class ShellyController(ShellyService shelly) : ControllerBase
 {
     private CurrentUser Me => CurrentUser.From(User);
 
-    /// <summary>The switches the caller may see. The auth key is never included.</summary>
+    /// <summary>The switches the caller may see (with whether the caller may switch them). The auth key is never included.</summary>
     [HttpGet]
     public async Task<ActionResult<List<ShellyDeviceDto>>> List(CancellationToken ct) => await shelly.ListAsync(Me, ct);
 
@@ -43,15 +43,19 @@ public class ShellyController(ShellyService shelly) : ControllerBase
     [ProducesResponseType(204)]
     public async Task<IActionResult> Delete(int id, CancellationToken ct) { await shelly.DeleteAsync(id, Me, ct); return NoContent(); }
 
-    /// <summary>Live state from the Shelly Cloud: online, ON/OFF, power, voltage, current, temperature, Wi-Fi.</summary>
+    /// <summary>Daily ON / OFF time and the override of one switch (SuperAdmin only). Each switch has its own settings.</summary>
+    [HttpPut("{id:int}/config"), Authorize(Policies.SuperAdminOnly)]
+    public async Task<ActionResult<ShellyDeviceDto>> UpdateConfig(int id, UpdateShellyConfigRequest req, CancellationToken ct) => await shelly.UpdateConfigAsync(id, req, Me, ct);
+
+    /// <summary>Live state from the Shelly Cloud: online and ON/OFF for everyone; power, voltage, current, temperature and Wi-Fi for the SuperAdmin only.</summary>
     [HttpGet("{id:int}/status")]
     public async Task<ActionResult<ShellyStatusDto>> Status(int id, CancellationToken ct) => await shelly.StatusAsync(id, Me, ct);
 
-    /// <summary>Turn the switch ON or OFF. Audited (who, when, result). The same switch cannot be commanded twice within a couple of seconds.</summary>
-    [HttpPost("{id:int}/switch")]
+    /// <summary>Turn the switch ON or OFF. SuperAdmin always; Admin only while the SuperAdmin override is off (403 control_locked otherwise); Users never. Audited (who, when, result). The same switch cannot be commanded twice within a couple of seconds.</summary>
+    [HttpPost("{id:int}/switch"), Authorize(Policies.AdminOrAbove)]
     public async Task<ActionResult<SwitchResultDto>> Switch(int id, SwitchRequest req, CancellationToken ct) => await shelly.SwitchAsync(id, req.On, Me, ct);
 
     /// <summary>The last 20 ON/OFF commands of the switch.</summary>
-    [HttpGet("{id:int}/commands")]
+    [HttpGet("{id:int}/commands"), Authorize(Policies.AdminOrAbove)]
     public async Task<ActionResult<List<ShellyCommandDto>>> Commands(int id, CancellationToken ct) => await shelly.CommandsAsync(id, Me, ct);
 }

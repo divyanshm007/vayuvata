@@ -5,7 +5,10 @@ import type {
   DeviceKeyHashDto, DeviceWithKeyDto, HealthResponse, HistoryQuery, LoginResponse, PageParams, PagedResult, Profile, SensorDataDto,
   SensorDataQuery, UpdateDeviceRequest, UpdateUserRequest, UserDto, UserQuery,
   GovDeviceComparison, GovStatus, GovSyncResult, SensorSeriesResult, DeviceHealth,
-  ShellyDevice, ShellyStatus, ShellyCommand, CreateShellyRequest, UpdateShellyRequest,
+  ShellyDevice, ShellyStatus, ShellyCommand, CreateShellyRequest, UpdateShellyRequest, UpdateShellyConfigRequest,
+  RegisterRequest, RegisterResponse, RegistrationRequestDto, ApproveRegistrationRequest, InviteUserRequest, InviteResult, ActivationCheck,
+  AccountHistoryItem, EmailLogItem, AdminMapping, RegistrationLink, EmailOutcome,
+  VideoOverview, VideoItemDto, VideoHistoryItem, UpdateVideoConfigRequest, AdminVideoSettings,
 } from '../types/api';
 
 const data = <T,>(p: Promise<{ data: T }>) => p.then((r) => r.data);
@@ -16,6 +19,47 @@ export const authApi = {
   me: () => data(http.get<Profile>('/auth/me')),
   changePassword: (currentPassword: string, newPassword: string) =>
     data(http.post<LoginResponse>('/auth/change-password', { currentPassword, newPassword })),
+};
+
+/** Settings -> Video Management. Every rule is enforced by the server; the UI only reflects what it reports. */
+export const videoApi = {
+  overview: (device: string) => data(http.get<VideoOverview>(`/video-management/devices/${encodeURIComponent(device)}`)),
+  list: (device: string) => data(http.get<VideoItemDto[]>(`/video-management/devices/${encodeURIComponent(device)}/videos`)),
+  history: (device: string) => data(http.get<VideoHistoryItem[]>(`/video-management/devices/${encodeURIComponent(device)}/history`)),
+  upload: (device: string, file: File, onProgress?: (pct: number) => void) => {
+    const fd = new FormData(); fd.append('file', file, file.name);
+    return data(http.post<VideoItemDto>(`/video-management/devices/${encodeURIComponent(device)}/videos`, fd, {
+      timeout: 0, headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (e) => { if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100)); },
+    }));
+  },
+  remove: (id: number) => http.delete(`/video-management/videos/${id}`).then(() => undefined),
+  playback: (device: string, enabled: boolean) => data(http.post<VideoOverview>(`/video-management/devices/${encodeURIComponent(device)}/playback`, { enabled })),
+  setActive: (device: string, videoId: number) => data(http.put<VideoOverview>(`/video-management/devices/${encodeURIComponent(device)}/active-video`, { videoId })),
+  admins: () => data(http.get<AdminVideoSettings[]>('/video-management/admins')),
+  adminConfig: (adminId: number, b: UpdateVideoConfigRequest) => data(http.put<AdminVideoSettings>(`/video-management/admins/${adminId}/config`, b)),
+  config: (device: string, b: UpdateVideoConfigRequest) => data(http.put<VideoOverview>(`/video-management/devices/${encodeURIComponent(device)}/config`, b)),
+};
+
+/** Public (no login): register, check and use an activation link. */
+export const registrationApi = {
+  register: (b: RegisterRequest) => data(axios.post<RegisterResponse>(`${API_PREFIX}/registrations`, b)),
+  checkActivation: (token: string) => data(axios.post<ActivationCheck>(`${API_PREFIX}/auth/activation/check`, { token })),
+  activate: (token: string, password: string) => axios.post(`${API_PREFIX}/auth/activate`, { token, password }).then(() => undefined),
+};
+
+/** Super Admin: User Management. */
+export const userMgmtApi = {
+  requests: (q: PageParams & { status?: string; search?: string }) => data(http.get<PagedResult<RegistrationRequestDto>>('/user-management/requests', { params: clean(q) })),
+  approve: (id: number, b: ApproveRegistrationRequest) => data(http.post<RegistrationRequestDto>(`/user-management/requests/${id}/approve`, b)),
+  reject: (id: number, reason: string) => data(http.post<RegistrationRequestDto>(`/user-management/requests/${id}/reject`, { reason })),
+  invite: (b: InviteUserRequest) => data(http.post<InviteResult>('/user-management/invite', b)),
+  resend: (userId: number) => data(http.post<InviteResult>(`/user-management/users/${userId}/resend-invitation`)),
+  mapping: () => data(http.get<AdminMapping[]>('/user-management/admin-mapping')),
+  history: (q: PageParams) => data(http.get<PagedResult<AccountHistoryItem>>('/user-management/history', { params: clean(q) })),
+  emailLog: (q: PageParams) => data(http.get<PagedResult<EmailLogItem>>('/user-management/email-log', { params: clean(q) })),
+  link: () => data(http.get<RegistrationLink>('/user-management/registration-link')),
+  sendLink: (email: string) => data(http.post<EmailOutcome>('/user-management/registration-link/send', { email })),
 };
 
 export const usersApi = {
@@ -55,6 +99,8 @@ export const shellyApi = {
   update: (id: number, b: UpdateShellyRequest) => data(http.put<ShellyDevice>(`/shelly-devices/${id}`, b)),
   /** SuperAdmin only. Removes the switch and its command history for good. */
   remove: (id: number) => http.delete(`/shelly-devices/${id}`).then(() => undefined),
+  /** SuperAdmin: daily ON / OFF time and the override of one switch. */
+  updateConfig: (id: number, b: UpdateShellyConfigRequest) => data(http.put<ShellyDevice>(`/shelly-devices/${id}/config`, b)),
   /** Live state from the Shelly Cloud (can take a second or two). */
   status: (id: number) => data(http.get<ShellyStatus>(`/shelly-devices/${id}/status`, { timeout: 30_000 })),
   switch: (id: number, on: boolean) => data(http.post<{ ok: boolean; on: boolean; message: string }>(`/shelly-devices/${id}/switch`, { on }, { timeout: 30_000 })),

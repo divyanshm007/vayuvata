@@ -1,3 +1,4 @@
+import { LocationCell } from './LocationCell';
 import { useState } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import {
@@ -72,7 +73,7 @@ export default function AssignmentsPage() {
         <TableContainer>
           <Table size="small" aria-label="Device assignments">
             <TableHead><TableRow>
-              <TableCell>Device</TableCell><TableCell>Assigned to</TableCell><TableCell>Assigned since</TableCell><TableCell>Device status</TableCell><TableCell align="right">Assignment</TableCell>
+              <TableCell>Device</TableCell><TableCell>Location</TableCell><TableCell>Assigned to</TableCell><TableCell>Assigned since</TableCell><TableCell>Device status</TableCell><TableCell align="right">Assignment</TableCell>
             </TableRow></TableHead>
             <TableBody>
               {list.data?.items.map((d) => (
@@ -81,6 +82,7 @@ export default function AssignmentsPage() {
                     <Link component={RouterLink} to={`/devices/${d.id}`} underline="hover" fontWeight={600}>{d.deviceName}</Link>
                     <Typography variant="caption" display="block" color="text.secondary" sx={{ fontFamily: 'ui-monospace, Consolas, monospace' }}>{d.deviceId}</Typography>
                   </TableCell>
+                  <TableCell><LocationCell loc={d.lastLocation} /></TableCell>
                   <TableCell>{d.assignedUserName
                     ? <Box><Typography fontWeight={600} variant="body2">{d.assignedUserName}</Typography></Box>
                     : <Typography variant="body2" color="warning.main" fontWeight={600}>Unassigned</Typography>}</TableCell>

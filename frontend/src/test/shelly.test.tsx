@@ -18,10 +18,10 @@ vi.mock('../api/services', () => ({
 
 const sw = (over: Partial<ShellyDevice> = {}): ShellyDevice => ({
   id: 1, name: 'Vayu_004 power', shellyId: 'd0cf13cb84d4', cloudHost: 'shelly-277-eu.shelly.cloud', channel: 0, deviceId: 'Vayu_004', deviceName: 'Vayu_004 (UAT)',
-  isActive: true, authKeyHint: null, createdAt: '2026-10-21T00:00:00Z', lastCommandAt: null, lastCommandOn: null, lastCommandBy: null, ...over,
+  isActive: true, authKeyHint: null, createdAt: '2026-10-21T00:00:00Z', lastCommandAt: null, lastCommandOn: null, lastCommandBy: null, overrideActive: false, canControl: true, config: null, ...over,
 });
 const status = (over: Partial<ShellyStatus> = {}): ShellyStatus => ({
-  id: 1, online: true, on: true, powerW: 12.5, voltageV: 230, currentA: 0.05, temperatureC: 41, wifiRssi: -50, ssid: 'x', energyTotalWh: 1, cloudUpdatedAt: null, checkedAt: '2026-10-21T00:00:00Z', ...over,
+  id: 1, online: true, on: true, powerW: 12.5, voltageV: 230, currentA: 0.05, temperatureC: 41, wifiRssi: -50, ssid: 'x', energyTotalWh: 1, cloudUpdatedAt: null, checkedAt: '2026-10-21T00:00:00Z', errors: [], ...over,
 });
 const mount = () => render(<ThemeProvider theme={theme}><MemoryRouter><ToastProvider><ShellyPage /></ToastProvider></MemoryRouter></ThemeProvider>);
 

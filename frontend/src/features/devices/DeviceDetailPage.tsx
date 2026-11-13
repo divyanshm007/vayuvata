@@ -6,6 +6,7 @@ import { ActiveChip, AqiBadge, AssignedChip, PageHeader, PaginationBar, Reportin
 import { EmptyState, ErrorState, TableSkeleton } from '../../components/feedback';
 import { useAsync } from '../../utils/useAsync';
 import { fmtNum, fmtUtc, fmtWallClock, isRecentlyReporting, toApiDateTime, toApiDateTimeEnd } from '../../utils/format';
+import { useTempView } from '../../utils/temperature';
 import { useAuth } from '../auth/AuthContext';
 import { AqiLegend, AqiTrendChart, ChartCard, PmChart, TempHumChart, toSeries } from '../analytics/charts';
 import { RangePicker, useRange, useSeries } from '../analytics/useSeries';
@@ -17,6 +18,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 export default function DeviceDetailPage() {
+  const { isSA, tempShort } = useTempView();
   const id = Number(useParams().id);
   const { role } = useAuth();
   const health = useDeviceHealth();
@@ -86,13 +88,13 @@ export default function DeviceDetailPage() {
               <Typography fontWeight={700} sx={{ p: 2.5, pb: 1 }}>Reading history</Typography>
               <TableContainer>
                 <Table size="small" aria-label="Reading history">
-                  <TableHead><TableRow><TableCell>Recorded (IST)</TableCell><TableCell>AQI</TableCell><TableCell align="right">PM2.5</TableCell><TableCell align="right">PM10</TableCell><TableCell align="right">Temp</TableCell><TableCell align="right">Humidity</TableCell><TableCell align="right">Outer temp</TableCell><TableCell align="right">Outer hum.</TableCell></TableRow></TableHead>
+                  <TableHead><TableRow><TableCell>Recorded (IST)</TableCell><TableCell>AQI</TableCell><TableCell align="right">PM2.5</TableCell><TableCell align="right">PM10</TableCell><TableCell align="right">{tempShort}</TableCell><TableCell align="right">Humidity</TableCell>{isSA && <TableCell align="right">Outer temp</TableCell>}<TableCell align="right">Outer hum.</TableCell></TableRow></TableHead>
                   <TableBody>
                     {readings.data?.items.map((x) => (
                       <TableRow key={x.id} hover>
                         <TableCell>{fmtWallClock(x.recordedAt, true)}</TableCell><TableCell><AqiBadge aqi={x.aqi} status={x.aqiStatus} /></TableCell>
                         <TableCell align="right">{fmtNum(x.pm25)}</TableCell><TableCell align="right">{fmtNum(x.pm10)}</TableCell>
-                        <TableCell align="right">{fmtNum(x.temperature)}°C</TableCell><TableCell align="right">{fmtNum(x.humidity)}%</TableCell><TableCell align="right">{fmtNum(x.outerTemperature)}°C</TableCell><TableCell align="right">{fmtNum(x.outerHumidity)}%</TableCell>
+                        <TableCell align="right">{fmtNum(x.temperature)}°C</TableCell><TableCell align="right">{fmtNum(x.humidity)}%</TableCell>{isSA && <TableCell align="right">{fmtNum(x.outerTemperature)}°C</TableCell>}<TableCell align="right">{fmtNum(x.outerHumidity)}%</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, Link as RouterLink } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
-  Alert, Box, Button, Checkbox, CircularProgress, FormControlLabel, IconButton, InputAdornment, Stack, TextField, Typography, useMediaQuery,
+  Alert, Box, Button, Checkbox, CircularProgress, FormControlLabel, IconButton, InputAdornment, Link, Stack, TextField, Typography, useMediaQuery,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import Visibility from '@mui/icons-material/Visibility';
@@ -189,6 +189,8 @@ export default function LoginPage() {
           </Button>
         </Stack>
       </form>
+
+      <Typography variant="body2" sx={{ textAlign: 'center', mt: 2, color: 'rgba(11,58,115,.75)' }}>New here? <Link component={RouterLink} to="/register" underline="hover" sx={{ fontWeight: 700 }}>Register</Link></Typography>
 
       {SHOW_TEST_ACCOUNTS && <TestAccounts accounts={testAccounts} onPick={(a) => { setValue('email', a.email); setValue('password', a.password); }} />}
       <Typography variant="caption" sx={{ display: 'block', textAlign: 'center', mt: 2, color: 'rgba(11,58,115,.65)' }}>{BRAND_NAME} {BRAND_TAGLINE} · v{APP_VERSION}</Typography>

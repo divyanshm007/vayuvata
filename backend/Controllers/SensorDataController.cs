@@ -63,6 +63,13 @@ public class SensorDataController(SensorDataService sensors) : ControllerBase
     [ProducesResponseType<ApiError>(404)]
     public async Task<ActionResult<SensorDataDto>> Latest(int id, CancellationToken ct) => await sensors.LatestAsync(id, Me, ct);
 
+    /// <summary>The newest reading of one device. NO login or token needed; read-only; limited per IP. Example: <c>/api/v1/latest?deviceId=Vayu_004</c>.</summary>
+    [HttpGet("api/v1/latest"), AllowAnonymous, EnableRateLimiting("public-read")]
+    [ProducesResponseType<SensorDataDto>(200)]
+    [ProducesResponseType<ApiError>(404)]
+    [ProducesResponseType<ApiError>(429)]
+    public async Task<ActionResult<SensorDataDto>> LatestPublic([FromQuery] string deviceId, CancellationToken ct) => await sensors.LatestPublicAsync(deviceId, ct);
+
     /// <summary>Paged reading history of a device with optional from/to (UTC).</summary>
     [HttpGet("api/v1/devices/{id:int}/sensor-data/history"), Authorize(Policies.AnyRole)]
     [ProducesResponseType<PagedResult<SensorDataDto>>(200)]

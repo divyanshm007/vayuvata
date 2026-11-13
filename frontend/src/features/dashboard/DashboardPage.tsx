@@ -20,6 +20,8 @@ import { presetRange, useRange, useSeries } from '../analytics/useSeries';
 import { DeviceHealthAlerts, useDeviceHealth } from '../devices/useDeviceHealth';
 import { toSeries, C } from '../analytics/charts';
 import { fmtNum, fmtWallClock, isRecentlyReporting, parseApiDate } from '../../utils/format';
+import { useTempView } from '../../utils/temperature';
+import { RegistrationLinkCard } from '../registration/RegistrationLinkCard';
 import { aqiCategory } from '../../utils/aqi';
 import { useAsync } from '../../utils/useAsync';
 import { tokens } from '../../theme/theme';
@@ -49,6 +51,7 @@ function useCounts(role: 'SuperAdmin' | 'Admin' | 'User') {
 const grid = (cols: Record<string, string>) => ({ display: 'grid', gap: 2, gridTemplateColumns: cols });
 
 export default function DashboardPage() {
+  const { isSA, tempLabel } = useTempView();
   const { user, role } = useAuth();
   const r = role ?? 'User';
   const counts = useCounts(r);
@@ -120,6 +123,8 @@ export default function DashboardPage() {
         actionLabel={r === 'User' ? 'View Latest Readings' : 'View Sensor Readings'} actionTo={r === 'User' ? '/latest' : '/readings'}
       />
 
+      {r === 'SuperAdmin' && <Box sx={{ mb: 2 }}><RegistrationLinkCard /></Box>}
+
       {!!dev.error && <ErrorState error={dev.error} onRetry={dev.reload} />}
       {!dev.loading && !dev.error && dev.devices.length === 0 && (
         <Card sx={{ mb: 2 }}><EmptyState title={r === 'User' ? 'No devices assigned to you yet' : 'No devices to show yet'} hint={r === 'User' ? 'Ask your administrator to assign a device.' : r === 'SuperAdmin' ? 'Register a device to start receiving data.' : 'Devices appear here once assigned to your users.'} /></Card>
@@ -137,9 +142,9 @@ export default function DashboardPage() {
         </Box>
         <MetricCard label="PM2.5" unit="µg/m³" icon={GrainOutlined} accent={C.pm25} tint="#FDE9A8" loading={busy} value={fmtNum(cur?.pm25, 0)} delta={deltaVsAverage(col('pm25'), 'down')} spark={col('pm25')} />
         <MetricCard label="PM10" unit="µg/m³" icon={BlurOnOutlined} accent={C.pm10} tint="#E4DBFF" loading={busy} value={fmtNum(cur?.pm10, 0)} delta={deltaVsAverage(col('pm10'), 'down')} spark={col('pm10')} />
-        <MetricCard label="Temperature" unit="°C" icon={ThermostatOutlined} accent="#EA580C" tint="#FFDDBA" loading={busy} value={fmtNum(cur?.temperature)} delta={deltaVsAverage(col('temperature'), 'neutral')} spark={col('temperature')} />
+        <MetricCard label={tempLabel} unit="°C" icon={ThermostatOutlined} accent="#EA580C" tint="#FFDDBA" loading={busy} value={fmtNum(cur?.temperature)} delta={deltaVsAverage(col('temperature'), 'neutral')} spark={col('temperature')} />
         <MetricCard label="Humidity" unit="%" icon={WaterDropOutlined} accent={C.hum} tint="#BDF3E6" loading={busy} value={fmtNum(cur?.humidity, 0)} delta={deltaVsAverage(col('humidity'), 'neutral')} spark={col('humidity')} />
-        <MetricCard label="Outer temperature" unit="°C" icon={ThermostatOutlined} accent="#C2410C" tint="#FFE4CC" loading={busy} value={fmtNum(cur?.outerTemperature)} delta={deltaVsAverage(col('outerTemperature'), 'neutral')} spark={col('outerTemperature')} />
+        {isSA && <MetricCard label="Outer temperature" unit="°C" icon={ThermostatOutlined} accent="#C2410C" tint="#FFE4CC" loading={busy} value={fmtNum(cur?.outerTemperature)} delta={deltaVsAverage(col('outerTemperature'), 'neutral')} spark={col('outerTemperature')} />}
         <MetricCard label="Outer humidity" unit="%" icon={WaterDropOutlined} accent="#0E7490" tint="#CFF3F8" loading={busy} value={fmtNum(cur?.outerHumidity, 0)} delta={deltaVsAverage(col('outerHumidity'), 'neutral')} spark={col('outerHumidity')} />
       </Box>
 

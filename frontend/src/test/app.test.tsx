@@ -18,6 +18,7 @@ vi.mock('../api/services', () => ({
   usersApi: { list: vi.fn() },
   sensorApi: { latest: vi.fn(), list: vi.fn(), history: vi.fn(), get: vi.fn() },
   healthApi: { get: vi.fn() },
+  userMgmtApi: { link: vi.fn().mockResolvedValue({ url: 'http://localhost/register', emailConfigured: true }) },
 }));
 
 const empty = { items: [], page: 1, pageSize: 20, totalCount: 0, totalPages: 0, hasNextPage: false };
@@ -84,9 +85,9 @@ describe('unified login and role-based navigation', () => {
   });
 
   it.each([
-    ['SuperAdmin', ['Admin Management', 'Device Assignments', 'Historical Reports'], []],
-    ['Admin', ['My Users', 'Historical Reports', 'Gov Comparison'], ['Admin Management', 'Device Assignments']],
-    ['User', ['My Devices', 'Latest Sensor Readings', 'Reading History', 'Historical Reports', 'Gov Comparison'], ['My Users', 'Admin Management', 'System Health', 'Device Assignments']],
+    ['SuperAdmin', ['Admin Management', 'User Management', 'Device Assignments', 'Historical Reports'], []],
+    ['Admin', ['My Users', 'Historical Reports', 'Gov Comparison'], ['Admin Management', 'User Management', 'Device Assignments']],
+    ['User', ['My Devices', 'Latest Sensor Readings', 'Reading History', 'Historical Reports', 'Gov Comparison'], ['My Users', 'Admin Management', 'System Health', 'Device Assignments', 'User Management']],
   ] as const)('%s sees only their own navigation (role taken from /auth/me)', async (role, shown, hidden) => {
     renderApp('/login');
     await signIn(role);

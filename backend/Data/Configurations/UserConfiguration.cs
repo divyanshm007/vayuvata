@@ -30,6 +30,10 @@ public class UserConfiguration : IEntityTypeConfiguration<User>
         b.Property(u => u.FailedLoginCount).HasDefaultValue(0);
         b.Property(u => u.LastFailedLoginAt).HasColumnType("datetime2(3)");
         b.Property(u => u.LockoutUntil).HasColumnType("datetime2(3)");
+        b.Property(u => u.Mobile).HasMaxLength(20).IsUnicode(false);
+        b.Property(u => u.EmailConfirmedAt).HasColumnType("datetime2(3)");
+        b.Property(u => u.ApprovedAt).HasColumnType("datetime2(3)");
+        b.Property(u => u.Source).HasMaxLength(10).IsUnicode(false);
 
         b.HasIndex(u => u.Email).IsUnique();
         b.HasIndex(u => u.ManagerId);

@@ -16,7 +16,12 @@ const LatestPage = lazy(() => import('../features/sensor-data/LatestPage'));
 const AnalyticsPage = lazy(() => import('../features/analytics/AnalyticsPage'));
 const ReportsPage = lazy(() => import('../features/analytics/ReportsPage'));
 const GovComparisonPage = lazy(() => import('../features/government/GovComparisonPage'));
+const UserManagementPage = lazy(() => import('../features/registration/UserManagementPage'));
+const RegisterPage = lazy(() => import('../features/registration/RegisterPage'));
+const ActivatePage = lazy(() => import('../features/registration/ActivatePage'));
 const ShellyPage = lazy(() => import('../features/shelly/ShellyPage'));
+const VideoManagementPage = lazy(() => import('../features/video/VideoManagementPage'));
+const DeviceConfigurationPage = lazy(() => import('../features/shelly/DeviceConfigurationPage'));
 const HealthPage = lazy(() => import('../features/health/HealthPage'));
 const UsersPage = lazy(() => import('../features/users/UserPages').then((m) => ({ default: m.UsersPage })));
 const AdminsPage = lazy(() => import('../features/users/UserPages').then((m) => ({ default: m.AdminsPage })));
@@ -64,10 +69,13 @@ export default function AppRoutes() {
     <Suspense fallback={<Spinner />}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/register" element={<RegisterPage />} />
+        <Route path="/activate" element={<ActivatePage />} />
         <Route element={<RequireAuth><AppLayout /></RequireAuth>}>
           <Route index element={<DashboardPage />} />
           <Route path="users" element={<RequireRole roles={OPS}><UsersPage /></RequireRole>} />
           <Route path="users/:id" element={<RequireRole roles={OPS}><UserDetailPage /></RequireRole>} />
+          <Route path="user-management" element={<RequireRole roles={SA}><UserManagementPage /></RequireRole>} />
           <Route path="admins" element={<RequireRole roles={SA}><AdminsPage /></RequireRole>} />
           <Route path="admins/:id" element={<RequireRole roles={OPS}><AdminUsersPage /></RequireRole>} />
           <Route path="devices" element={<DevicesPage />} />
@@ -80,6 +88,8 @@ export default function AppRoutes() {
           <Route path="reports" element={<ReportsPage />} />
           <Route path="gov-comparison" element={<GovComparisonPage />} />
           <Route path="shelly" element={<RequireRole roles={OPS}><ShellyPage /></RequireRole>} />
+          <Route path="settings/device-configuration" element={<DeviceConfigurationPage />} />
+          <Route path="settings/video-management" element={<VideoManagementPage />} />
           <Route path="health" element={<RequireRole roles={OPS}><HealthPage /></RequireRole>} />
           <Route path="profile" element={<ProfilePage />} />
           <Route path="change-password" element={<ChangePasswordPage />} />

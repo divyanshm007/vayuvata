@@ -380,9 +380,11 @@ public class GovernmentDataService(VayuVataDbContext db, IHttpClientFactory http
                     d.WindowSamples = 1; d.IsLastKnown = false;
                     d.Pm25 = r.Pm25; d.Pm10 = r.Pm10; d.No2Ppm = r.No2Ppm; d.So2Ppm = r.So2Ppm; d.CoPpm = r.CoPpm; d.TvocPpb = r.TvocPpb;
                     d.Temperature = r.Temperature; d.Humidity = r.Humidity; d.OuterTemperature = r.OuterTemperature; d.OuterHumidity = r.OuterHumidity;
+                    // SuperAdmin: inner and outer. Admin / User: only the outer temperature, named "Temperature" (same rule as the readings).
+                    if (!caller.IsSuperAdmin) { d.Temperature = d.OuterTemperature; d.OuterTemperature = null; }
                     d.Aqi = IndiaAqi.Calculate(d.Pm25, d.Pm10); d.AqiStatus = d.Aqi is null ? null : IndiaAqi.Status(d.Aqi.Value);
                     dto.TimeGapMinutes = (int)(r.RecordedAt - observed.Value).TotalMinutes;
-                    dto.Rows = BuildRows(dto);
+                    dto.Rows = BuildRows(dto, caller.IsSuperAdmin);
                     var gap = Math.Abs(dto.TimeGapMinutes.Value);
                     dto.StatusMessage = $"Latest of each side: device {r.RecordedAt:dd MMM HH:mm}, government {observed.Value:dd MMM HH:mm} IST ({gap / 60} h {gap % 60} min apart, device is {(dto.TimeGapMinutes >= 0 ? "newer" : "older")}).";
                 }
@@ -409,12 +411,12 @@ public class GovernmentDataService(VayuVataDbContext db, IHttpClientFactory http
         return r;
     }
 
-    private static List<ComparisonRowDto> BuildRows(DeviceComparisonDto d)
+    private static List<ComparisonRowDto> BuildRows(DeviceComparisonDto d, bool superAdmin)
     {
         decimal? G(string p) => d.Government.Pollutants.FirstOrDefault(x => x.Pollutant == p)?.Avg;
         var gAqi = d.Government.Station?.CalculatedAqi;
-        return
-        [
+        var rows = new List<ComparisonRowDto>
+        {
             Row("AQI (calculated from PM)", "", d.Device.Aqi, gAqi, true, "The feed has no official AQI; both sides use the same CPCB PM2.5/PM10 formula."),
             Row("PM2.5", "µg/m³", d.Device.Pm25, G("PM2.5"), true),
             Row("PM10", "µg/m³", d.Device.Pm10, G("PM10"), true),
@@ -426,7 +428,9 @@ public class GovernmentDataService(VayuVataDbContext db, IHttpClientFactory http
             Row("Humidity", "%", d.Device.Humidity, null, false, "The government feed has no humidity."),
             Row("Outer temperature", "°C", d.Device.OuterTemperature, null, false, "The government feed has no temperature."),
             Row("Outer humidity", "%", d.Device.OuterHumidity, null, false, "The government feed has no humidity."),
-        ];
+        };
+        if (!superAdmin) rows.RemoveAll(r => r.Parameter == "Outer temperature");   // they see one temperature (the outer one) under the name Temperature
+        return rows;
     }
 
     public async Task<List<DeviceComparisonDto>> CompareAllAsync(double nearbyRadiusKm, CurrentUser caller, CancellationToken ct)
