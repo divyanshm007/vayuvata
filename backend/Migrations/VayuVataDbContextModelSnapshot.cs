@@ -289,6 +289,11 @@ namespace VayuVata.Migrations
                     b.Property<int>("ResolveGraceMinutes")
                         .HasColumnType("int");
 
+                    b.Property<int>("SensorNoDataMinutes")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int")
+                        .HasDefaultValue(5);
+
                     b.Property<decimal>("TempChangeDegrees")
                         .HasPrecision(5, 2)
                         .HasColumnType("decimal(5,2)");

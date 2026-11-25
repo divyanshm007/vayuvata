@@ -34,6 +34,7 @@ const SECTIONS: Array<{ title: string; text: string; fields: Field[] }> = [
   { title: 'Machine errors', text: 'Reported to the Super Admin and the Admin at once.', fields: [
     { key: 'offlineAfterMinutes', label: 'Device offline after no reading for (minutes)', help: '' },
     { key: 'outerMissingPercent', label: 'Outer sensor failure when this % of the last hour is missing', help: '' },
+    { key: 'sensorNoDataMinutes', label: 'Sensor stopped when it sent no value for (minutes)', help: 'Checked while the device still sends other data. 5 recommended: the TVOC sensor needs 3 to 5 minutes to warm up.' },
   ] },
 ];
 

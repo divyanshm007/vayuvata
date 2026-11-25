@@ -29,7 +29,7 @@ const maint = (): DeviceMaintenance => ({
   bin: { alertType: 'BinCleaning', lastDoneAt: '2026-10-20T00:00:00Z', fromRegistration: false, dueAt: '2027-01-18T00:00:00Z', daysLeft: 66, status: 'Normal' },
 });
 const cfg = (): AlertConfig => ({ filterIntervalDays: 45, binIntervalDays: 90, maintenanceWarnDaysBefore: 7, maintenanceCriticalOverdueDays: 7, maintenanceRepeatDays: 7, baselineDays: 5, recentWindowMinutes: 60,
-  aqiChangePercent: 50, aqiMinChange: 40, tempChangeDegrees: 8, minBaselineSamples: 200, warningAfterHours: 7, criticalAfterHours: 24, resolveGraceMinutes: 60, offlineAfterMinutes: 60, outerMissingPercent: 50, emailEnabled: true });
+  aqiChangePercent: 50, aqiMinChange: 40, tempChangeDegrees: 8, minBaselineSamples: 200, warningAfterHours: 7, criticalAfterHours: 24, resolveGraceMinutes: 60, offlineAfterMinutes: 60, outerMissingPercent: 50, sensorNoDataMinutes: 5, emailEnabled: true });
 const wrap = (ui: React.ReactNode) => render(<ThemeProvider theme={theme}><MemoryRouter><ToastProvider>{ui}</ToastProvider></MemoryRouter></ThemeProvider>);
 
 beforeEach(() => {
@@ -121,6 +121,15 @@ describe('Alert configuration page', () => {
     fireEvent.change(filter, { target: { value: '30' } });
     await userEvent.click(screen.getByRole('button', { name: 'Save configuration' }));
     await waitFor(() => expect(alertsApi.updateConfig).toHaveBeenCalledWith(expect.objectContaining({ filterIntervalDays: 30, binIntervalDays: 90 })));
+  });
+
+  it('has the sensor-stopped time (5 minutes, TVOC boot-up) and saves a change', async () => {
+    wrap(<AlertConfigPage />);
+    const f = await screen.findByLabelText('Sensor stopped when it sent no value for (minutes)');
+    expect(f).toHaveValue(5);
+    fireEvent.change(f, { target: { value: '10' } });
+    await userEvent.click(screen.getByRole('button', { name: 'Save configuration' }));
+    await waitFor(() => expect(alertsApi.updateConfig).toHaveBeenCalledWith(expect.objectContaining({ sensorNoDataMinutes: 10 })));
   });
 
   it('shows the server message when a value is refused', async () => {

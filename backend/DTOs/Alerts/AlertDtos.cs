@@ -101,6 +101,7 @@ public class AlertConfigDto
     public int ResolveGraceMinutes { get; set; } = 60;
     public int OfflineAfterMinutes { get; set; } = 60;
     public int OuterMissingPercent { get; set; } = 50;
+    public int SensorNoDataMinutes { get; set; } = 5;
     public bool EmailEnabled { get; set; } = true;
     public DateTime? UpdatedAt { get; set; }
 }

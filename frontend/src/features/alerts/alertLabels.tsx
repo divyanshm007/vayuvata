@@ -4,7 +4,7 @@ import type { AlertCategoryName, AlertStatusName } from '../../types/api';
 export const CATEGORY_LABEL: Record<AlertCategoryName, string> = { Maintenance: 'Maintenance', MachineError: 'Machine error', AbnormalReading: 'Abnormal reading' };
 
 export const TYPE_LABEL: Record<string, string> = {
-  FilterReplacement: 'Filter replacement', BinCleaning: 'Bin cleaning', DeviceOffline: 'Device offline', OuterSensorFailure: 'Outer sensor not delivering',
+  FilterReplacement: 'Filter replacement', BinCleaning: 'Bin cleaning', DeviceOffline: 'Device offline', OuterSensorFailure: 'Outer sensor not delivering', SensorNoData: 'Sensor not sending data',
   AqiAbnormal: 'Abnormal AQI', TemperatureAbnormal: 'Abnormal temperature',
 };
 

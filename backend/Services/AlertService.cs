@@ -16,6 +16,8 @@ public class AlertOptions
     public int IntervalMinutes { get; set; } = 15;
     /// <summary>Sensor times are stored as India time (UTC+5:30).</summary>
     public int UtcOffsetMinutes { get; set; } = 330;
+    /// <summary>Lets the Super Admin run an evaluation "as of" another time (testing against history). Off everywhere except Development.</summary>
+    public bool AllowAsOf { get; set; }
 }
 
 /// <summary>
@@ -38,7 +40,7 @@ public class AlertService(VayuVataDbContext db, NotificationService notifier, IO
         FilterIntervalDays = c.FilterIntervalDays, BinIntervalDays = c.BinIntervalDays, MaintenanceWarnDaysBefore = c.MaintenanceWarnDaysBefore, MaintenanceCriticalOverdueDays = c.MaintenanceCriticalOverdueDays,
         MaintenanceRepeatDays = c.MaintenanceRepeatDays, BaselineDays = c.BaselineDays, RecentWindowMinutes = c.RecentWindowMinutes, AqiChangePercent = c.AqiChangePercent, AqiMinChange = c.AqiMinChange,
         TempChangeDegrees = c.TempChangeDegrees, MinBaselineSamples = c.MinBaselineSamples, WarningAfterHours = c.WarningAfterHours, CriticalAfterHours = c.CriticalAfterHours,
-        ResolveGraceMinutes = c.ResolveGraceMinutes, OfflineAfterMinutes = c.OfflineAfterMinutes, OuterMissingPercent = c.OuterMissingPercent, EmailEnabled = c.EmailEnabled, UpdatedAt = c.UpdatedAt,
+        ResolveGraceMinutes = c.ResolveGraceMinutes, OfflineAfterMinutes = c.OfflineAfterMinutes, OuterMissingPercent = c.OuterMissingPercent, SensorNoDataMinutes = c.SensorNoDataMinutes, EmailEnabled = c.EmailEnabled, UpdatedAt = c.UpdatedAt,
     };
 
     public async Task<AlertConfigDto> GetConfigAsync(CurrentUser c, CancellationToken ct)
@@ -56,14 +58,14 @@ public class AlertService(VayuVataDbContext db, NotificationService notifier, IO
         Range("Maintenance reminder repeat (days)", r.MaintenanceRepeatDays, 1, 90); Range("Baseline (days)", r.BaselineDays, 1, 30); Range("Recent window (minutes)", r.RecentWindowMinutes, 5, 10080);
         Range("AQI change (percent)", r.AqiChangePercent, 0, 1000); Range("AQI minimum change", r.AqiMinChange, 0, 1000); Range("Temperature change (degrees)", r.TempChangeDegrees, 0, 60);
         Range("Minimum baseline readings", r.MinBaselineSamples, 1, 100000); Range("Warning after (hours)", r.WarningAfterHours, 0, 720); Range("Critical after (hours)", r.CriticalAfterHours, 1, 720);
-        Range("Resolve grace (minutes)", r.ResolveGraceMinutes, 0, 1440); Range("Offline after (minutes)", r.OfflineAfterMinutes, 5, 10080); Range("Outer sensor missing (percent)", r.OuterMissingPercent, 1, 100);
+        Range("Resolve grace (minutes)", r.ResolveGraceMinutes, 0, 1440); Range("Offline after (minutes)", r.OfflineAfterMinutes, 5, 10080); Range("Outer sensor missing (percent)", r.OuterMissingPercent, 1, 100); Range("Sensor stopped after (minutes)", r.SensorNoDataMinutes, 1, 60);
         if (r.CriticalAfterHours <= r.WarningAfterHours) throw ApiException.BadRequest("'Critical after' must be longer than 'Warning after'.", "validation_failed");
         var cfg = await db.AlertConfigurations.FirstOrDefaultAsync(x => x.Id == 1, ct);
         if (cfg is null) { cfg = new AlertConfiguration(); db.AlertConfigurations.Add(cfg); }
         cfg.FilterIntervalDays = r.FilterIntervalDays; cfg.BinIntervalDays = r.BinIntervalDays; cfg.MaintenanceWarnDaysBefore = r.MaintenanceWarnDaysBefore; cfg.MaintenanceCriticalOverdueDays = r.MaintenanceCriticalOverdueDays;
         cfg.MaintenanceRepeatDays = r.MaintenanceRepeatDays; cfg.BaselineDays = r.BaselineDays; cfg.RecentWindowMinutes = r.RecentWindowMinutes; cfg.AqiChangePercent = r.AqiChangePercent; cfg.AqiMinChange = r.AqiMinChange;
         cfg.TempChangeDegrees = r.TempChangeDegrees; cfg.MinBaselineSamples = r.MinBaselineSamples; cfg.WarningAfterHours = r.WarningAfterHours; cfg.CriticalAfterHours = r.CriticalAfterHours;
-        cfg.ResolveGraceMinutes = r.ResolveGraceMinutes; cfg.OfflineAfterMinutes = r.OfflineAfterMinutes; cfg.OuterMissingPercent = r.OuterMissingPercent; cfg.EmailEnabled = r.EmailEnabled;
+        cfg.ResolveGraceMinutes = r.ResolveGraceMinutes; cfg.OfflineAfterMinutes = r.OfflineAfterMinutes; cfg.OuterMissingPercent = r.OuterMissingPercent; cfg.SensorNoDataMinutes = r.SensorNoDataMinutes; cfg.EmailEnabled = r.EmailEnabled;
         cfg.UpdatedAt = DateTime.UtcNow; cfg.UpdatedByUserId = c.Id;
         await db.SaveChangesAsync(ct);
         log.LogInformation("AUDIT alert configuration changed by SuperAdmin {UserId}", c.Id);
@@ -206,7 +208,7 @@ public class AlertService(VayuVataDbContext db, NotificationService notifier, IO
 
     private static string Describe(string type) => type switch
     {
-        AlertType.FilterReplacement => "Filter replacement", AlertType.BinCleaning => "Bin cleaning", AlertType.DeviceOffline => "Device offline", AlertType.OuterSensorFailure => "Outer sensor not delivering",
+        AlertType.FilterReplacement => "Filter replacement", AlertType.BinCleaning => "Bin cleaning", AlertType.DeviceOffline => "Device offline", AlertType.OuterSensorFailure => "Outer sensor not delivering", AlertType.SensorNoData => "Sensor not sending data",
         AlertType.AqiAbnormal => "Abnormal AQI", AlertType.TemperatureAbnormal => "Abnormal temperature", _ => type,
     };
 
@@ -243,6 +245,24 @@ public class AlertService(VayuVataDbContext db, NotificationService notifier, IO
         }
     }
 
+    private const string SensorPrefix = "No data from: ";
+
+    /// <summary>
+    /// A sensor that sent no value for the whole window while the device still sends readings. One alert per device lists the stopped sensors; when one more sensor stops, the Super Admin and the Admin are told again.
+    /// </summary>
+    private void TrackSensors(Ctx x, string device, List<string> missing, AlertConfiguration cfg)
+    {
+        x.Open.TryGetValue((device, AlertType.SensorNoData), out var existing);
+        var previous = existing?.Detail is { } d && d.StartsWith(SensorPrefix) ? d[SensorPrefix.Length..].Split(" (")[0].Split(", ").ToHashSet() : [];
+        var detail = missing.Count == 0 ? "" : $"{SensorPrefix}{string.Join(", ", missing)} (for {cfg.SensorNoDataMinutes}+ minutes)";
+        Track(x, device, AlertCategory.MachineError, AlertType.SensorNoData, missing.Count > 0, detail, missing.Count, null, 0, cfg.CriticalAfterHours);
+        if (existing is { Status: AlertStatus.Warning or AlertStatus.Critical } && missing.Any(m => !previous.Contains(m)) && !x.ToNotify.Any(n => n.Alert == existing))
+        {
+            Event(x, existing, existing.Status, "Another sensor stopped: " + detail);
+            x.ToNotify.Add((existing, existing.Status));
+        }
+    }
+
     private void Maintenance(Ctx x, string device, string type, DateTime last, int intervalDays)
     {
         var s = MaintStatus(last, intervalDays, x.Cfg, x.Now);
@@ -265,6 +285,12 @@ public class AlertService(VayuVataDbContext db, NotificationService notifier, IO
     }
 
     /// <summary>One evaluation pass over all active devices. Runs every few minutes in the background; the Super Admin can also trigger it.</summary>
+    public Task<EvaluateResultDto> EvaluateAsOfAsync(DateTime? asOf, CancellationToken ct)
+    {
+        if (asOf is not null && !_o.AllowAsOf) throw ApiException.BadRequest("Evaluating as of another time is not enabled on this server.", "validation_failed");
+        return EvaluateAsync(asOf is { } t ? (t.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(t, DateTimeKind.Utc) : t.ToUniversalTime()) : DateTime.UtcNow, ct);
+    }
+
     public async Task<EvaluateResultDto> EvaluateAsync(DateTime utcNow, CancellationToken ct)
     {
         var cfg = await ConfigAsync(ct);
@@ -282,6 +308,13 @@ public class AlertService(VayuVataDbContext db, NotificationService notifier, IO
             .ToDictionary(r => r.Key, r => new Stats(r.N, r.Aqi, r.Temp));
         var baseline = await Window(baseFrom, recentFrom); var recent = await Window(recentFrom, ist.AddMinutes(1));
         var last = (await db.ManipulatedSensorData.AsNoTracking().Where(s => s.RecordedAt >= ist.AddDays(-2)).GroupBy(s => s.DeviceCode).Select(g => new { g.Key, At = g.Max(s => s.RecordedAt) }).ToListAsync(ct)).ToDictionary(r => r.Key, r => r.At);
+        // sensors: values received per sensor in the last N minutes (a device that sends readings but no value from one sensor = that sensor stopped)
+        var sensorFrom = ist.AddMinutes(-cfg.SensorNoDataMinutes);
+        var sensorWin = (await db.ManipulatedSensorData.AsNoTracking().Where(s => s.RecordedAt >= sensorFrom && s.RecordedAt < ist.AddMinutes(1)).GroupBy(s => s.DeviceCode).Select(g => new
+        {
+            g.Key, N = g.Count(), Pm25 = g.Count(s => s.Pm25 != null), Pm10 = g.Count(s => s.Pm10 != null), No2 = g.Count(s => s.No2Ppm != null), So2 = g.Count(s => s.So2Ppm != null), Co = g.Count(s => s.CoPpm != null),
+            Tvoc = g.Count(s => s.TvocPpb != null), Hum = g.Count(s => s.Humidity != null), Temp = g.Count(s => s.Temperature != null), OutT = g.Count(s => s.OuterTemperature != null), OutH = g.Count(s => s.OuterHumidity != null),
+        }).ToListAsync(ct)).ToDictionary(r => r.Key);
         var hourMissing = (await db.ManipulatedSensorData.AsNoTracking().Where(s => s.RecordedAt >= ist.AddHours(-1)).GroupBy(s => s.DeviceCode)
             .Select(g => new { g.Key, N = g.Count(), Missing = g.Count(s => s.OuterTemperature == null || s.OuterHumidity == null) }).ToListAsync(ct)).ToDictionary(r => r.Key, r => r);
 
@@ -300,6 +333,14 @@ public class AlertService(VayuVataDbContext db, NotificationService notifier, IO
                 Track(x, d.DeviceId, AlertCategory.MachineError, AlertType.DeviceOffline, offline, seen ? $"No reading since {lastAt:yyyy-MM-dd HH:mm} (IST)" : "No reading in the last 2 days", null, null, 0, cfg.CriticalAfterHours);
                 var hm = hourMissing.GetValueOrDefault(d.DeviceId);
                 var outerBad = hm is not null && hm.N >= 10 && hm.Missing * 100.0 / hm.N >= cfg.OuterMissingPercent;
+                var sw = sensorWin.GetValueOrDefault(d.DeviceId);
+                var missing = new List<string>();
+                if (sw is not null && sw.N >= 3)
+                {
+                    var counts = new (string Name, int Count)[] { ("PM2.5", sw.Pm25), ("PM10", sw.Pm10), ("NO₂", sw.No2), ("SO₂", sw.So2), ("CO", sw.Co), ("TVOC", sw.Tvoc), ("Humidity", sw.Hum), ("Temperature", sw.Temp), ("Outer temperature", sw.OutT), ("Outer humidity", sw.OutH) };
+                    if (counts.Any(c => c.Count > 0)) missing = counts.Where(c => c.Count == 0).Select(c => c.Name).ToList();      // only when the device itself is delivering
+                }
+                TrackSensors(x, d.DeviceId, missing, cfg);
                 Track(x, d.DeviceId, AlertCategory.MachineError, AlertType.OuterSensorFailure, outerBad, hm is null ? "" : $"{hm.Missing} of {hm.N} readings in the last hour miss the outer temperature or humidity", hm is null ? null : (decimal)(hm.Missing * 100.0 / Math.Max(1, hm.N)), cfg.OuterMissingPercent, 0, cfg.CriticalAfterHours);
             }
 

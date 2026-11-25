@@ -14,6 +14,7 @@ public class AlertConfigurationConfiguration : IEntityTypeConfiguration<AlertCon
         b.Property(c => c.AqiChangePercent).HasPrecision(7, 2);
         b.Property(c => c.AqiMinChange).HasPrecision(7, 2);
         b.Property(c => c.TempChangeDegrees).HasPrecision(5, 2);
+        b.Property(c => c.SensorNoDataMinutes).HasDefaultValue(5);
         b.Property(c => c.UpdatedAt).HasColumnType("datetime2(3)");
     }
 }

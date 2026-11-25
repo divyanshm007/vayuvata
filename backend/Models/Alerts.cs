@@ -24,6 +24,8 @@ public static class AlertType
     public const string BinCleaning = "BinCleaning";
     public const string DeviceOffline = "DeviceOffline";
     public const string OuterSensorFailure = "OuterSensorFailure";
+    /// <summary>The device sends data, but one or more of its sensors send none (stopped).</summary>
+    public const string SensorNoData = "SensorNoData";
     public const string AqiAbnormal = "AqiAbnormal";
     public const string TemperatureAbnormal = "TemperatureAbnormal";
 }
@@ -71,6 +73,8 @@ public class AlertConfiguration
     public int OfflineAfterMinutes { get; set; } = 60;
     /// <summary>Outer sensor failure: at least this percent of the last hour's readings miss the outer temperature or humidity.</summary>
     public int OuterMissingPercent { get; set; } = 50;
+    /// <summary>A sensor has stopped when it sent no value for this many minutes while the device still sends readings. 5 minutes by default: the TVOC sensor needs 3 to 5 minutes to warm up after a start.</summary>
+    public int SensorNoDataMinutes { get; set; } = 5;
 
     public bool EmailEnabled { get; set; } = true;
     public DateTime? UpdatedAt { get; set; }

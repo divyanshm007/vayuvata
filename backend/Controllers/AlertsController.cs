@@ -48,5 +48,5 @@ public class AlertsController(AlertService alerts) : ControllerBase
 
     /// <summary>Run the alert evaluation now (Super Admin). It normally runs by itself every few minutes.</summary>
     [HttpPost("evaluate"), Authorize(Policies.SuperAdminOnly)]
-    public async Task<ActionResult<EvaluateResultDto>> Evaluate(CancellationToken ct) => await alerts.EvaluateAsync(DateTime.UtcNow, ct);
+    public async Task<ActionResult<EvaluateResultDto>> Evaluate([FromQuery] DateTime? asOf, CancellationToken ct) => await alerts.EvaluateAsOfAsync(asOf, ct);
 }

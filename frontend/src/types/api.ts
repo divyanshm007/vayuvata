@@ -103,7 +103,7 @@ export interface DeviceMaintenance { deviceId: string; deviceName: string; filte
 export interface AlertConfig {
   filterIntervalDays: number; binIntervalDays: number; maintenanceWarnDaysBefore: number; maintenanceCriticalOverdueDays: number; maintenanceRepeatDays: number;
   baselineDays: number; recentWindowMinutes: number; aqiChangePercent: number; aqiMinChange: number; tempChangeDegrees: number; minBaselineSamples: number;
-  warningAfterHours: number; criticalAfterHours: number; resolveGraceMinutes: number; offlineAfterMinutes: number; outerMissingPercent: number; emailEnabled: boolean; updatedAt?: string | null;
+  warningAfterHours: number; criticalAfterHours: number; resolveGraceMinutes: number; offlineAfterMinutes: number; outerMissingPercent: number; sensorNoDataMinutes: number; emailEnabled: boolean; updatedAt?: string | null;
 }
 
 // ---- Video management
