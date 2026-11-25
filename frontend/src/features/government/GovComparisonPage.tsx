@@ -15,6 +15,7 @@ import { useAuth } from '../auth/AuthContext';
 import { MAP_ATTRIBUTION, MAP_MAX_ZOOM, MAP_TILE_URL } from '../../config/mapTiles';
 import { fmtGov, fmtNum, fmtWallClock, NOT_AVAILABLE } from '../../utils/format';
 import { toAppError } from '../../utils/errors';
+import { fmtDisplay, govDisplay, isGas, radiusLabel } from '../../utils/units';
 import { useTempView } from '../../utils/temperature';
 import type { GovDeviceComparison, GovStationDto } from '../../types/api';
 
@@ -71,7 +72,7 @@ function GovMap({ cmp, mode, radiusKm }: { cmp: GovDeviceComparison; mode: 'devi
             {dev && <Polyline positions={[dev, stPt]} pathOptions={{ color: '#1D4ED8', weight: 3, dashArray: '6 6' }} />}
             {near.map((n) => (
               <Marker key={n.id} position={[n.latitude, n.longitude]} icon={NEAR_ICON}>
-                <Popup><b>{n.name}</b><br />{fmtNum(n.distanceKm)} km away<br />PM2.5 {fmtGov(n.pm25, 0)} · PM10 {fmtGov(n.pm10, 0)} µg/m³</Popup>
+                <Popup><b>{n.name}</b><br />{radiusLabel(n.distanceKm)}<br />PM2.5 {fmtGov(n.pm25, 0)} · PM10 {fmtGov(n.pm10, 0)} µg/m³</Popup>
               </Marker>
             ))}
           </>
@@ -93,7 +94,7 @@ function DevicePanel({ cmp, radiusKm }: { cmp: GovDeviceComparison; radiusKm: nu
   const d = cmp.device;
   const rows: Array<[string, string, string]> = [
     ['PM2.5', fmtNum(d.pm25), 'µg/m³'], ['PM10', fmtNum(d.pm10), 'µg/m³'], ['AQI (calculated from PM)', `${fmtNum(d.aqi, 0)}${d.aqiStatus ? ` · ${d.aqiStatus}` : ''}`, ''],
-    ['NO₂', fmtNum(d.no2Ppm, 3), 'device raw'], ['SO₂', fmtNum(d.so2Ppm, 3), 'device raw'], ['CO', fmtNum(d.coPpm, 2), 'ppm'],
+    ['NO₂', fmtNum(d.no2Ppm, 3), 'ppm'], ['SO₂', fmtNum(d.so2Ppm, 3), 'ppm'], ['CO', fmtNum(d.coPpm, 2), 'ppm'],
     ['TVOC', fmtNum(d.tvocPpb, 0), 'ppb'], [tempLabel, fmtNum(d.temperature), '°C'], ['Humidity', fmtNum(d.humidity), '%'],
     ...(isSA ? [['Outer temperature', fmtNum(d.outerTemperature), '°C'] as [string, string, string]] : []), ['Outer humidity', fmtNum(d.outerHumidity), '%'],
   ];
@@ -104,7 +105,7 @@ function DevicePanel({ cmp, radiusKm }: { cmp: GovDeviceComparison; radiusKm: nu
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>VayuVata device · our sensors</Typography>
         <Stack direction="row" flexWrap="wrap" gap={3}>
           <Stat label="Device position" value={d.location ? `${d.location.latitude.toFixed(5)}, ${d.location.longitude.toFixed(5)}` : '—'} />
-          <Stat label="Distance to station" value={fmtGov(cmp.government.station?.distanceKm)} unit={cmp.government.station?.distanceKm == null ? '' : 'km'} />
+          <Stat label="Station radius" value={radiusLabel(cmp.government.station?.distanceKm)} />
           <Stat label="Latest reading (IST)" value={d.latestReadingAt ? fmtWallClock(d.latestReadingAt, true) : '—'} />
           <Stat label="Position reported (IST)" value={d.locationRecordedAt ? fmtWallClock(d.locationRecordedAt, true) : '—'} unit={d.locationSource ?? ''} />
         </Stack>
@@ -135,7 +136,7 @@ function GovernmentPanel({ cmp, radiusKm }: { cmp: GovDeviceComparison; radiusKm
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>{s.city}, {s.state} · CPCB / state pollution control board station</Typography>
         <Stack direction="row" flexWrap="wrap" gap={3}>
           <Stat label="Station position" value={`${s.latitude.toFixed(5)}, ${s.longitude.toFixed(5)}`} />
-          <Stat label="Distance from device" value={fmtGov(s.distanceKm)} unit={s.distanceKm == null ? '' : 'km'} />
+          <Stat label="Radius from device" value={radiusLabel(s.distanceKm)} />
           <Stat label="Observed (IST)" value={s.observedAt ? fmtWallClock(s.observedAt, true) : NOT_AVAILABLE} />
           <Stat label="AQI (calculated from PM)" value={fmtGov(s.calculatedAqi, 0)} unit={s.calculatedAqi == null ? '' : s.calculatedAqiStatus ?? ''} />
         </Stack>
@@ -144,8 +145,7 @@ function GovernmentPanel({ cmp, radiusKm }: { cmp: GovDeviceComparison; radiusKm
             <TableHead><TableRow><TableCell>Pollutant</TableCell><TableCell align="right">Average</TableCell><TableCell align="right">Min</TableCell><TableCell align="right">Max</TableCell><TableCell>Unit</TableCell></TableRow></TableHead>
             <TableBody>
               {cmp.government.pollutants.map((p) => (
-                <TableRow key={p.pollutant}><TableCell>{p.pollutant}</TableCell><TableCell align="right">{fmtGov(p.avg)}</TableCell>
-                  <TableCell align="right">{fmtGov(p.min)}</TableCell><TableCell align="right">{fmtGov(p.max)}</TableCell><TableCell>{p.unit}</TableCell></TableRow>
+                <PollutantRow key={p.pollutant} p={p} />
               ))}
             </TableBody>
           </Table>
@@ -159,14 +159,22 @@ function GovernmentPanel({ cmp, radiusKm }: { cmp: GovDeviceComparison; radiusKm
   );
 }
 
+function PollutantRow({ p }: { p: { pollutant: string; avg: number | null; min: number | null; max: number | null; unit: string } }) {
+  const avg = govDisplay(p.pollutant, p.avg, p.unit), min = govDisplay(p.pollutant, p.min, p.unit), max = govDisplay(p.pollutant, p.max, p.unit);
+  return (
+    <TableRow><TableCell>{p.pollutant}</TableCell><TableCell align="right">{fmtDisplay(avg)}</TableCell>
+      <TableCell align="right">{fmtDisplay(min)}</TableCell><TableCell align="right">{fmtDisplay(max)}</TableCell><TableCell>{avg.unit}</TableCell></TableRow>
+  );
+}
+
 function NearbyTable({ list }: { list: GovStationDto[] }) {
   return (
     <TableContainer>
       <Table size="small" aria-label="Nearby stations">
-        <TableHead><TableRow><TableCell>Station</TableCell><TableCell align="right">Distance (km)</TableCell><TableCell align="right">PM2.5</TableCell><TableCell align="right">PM10</TableCell><TableCell align="right">AQI (calc.)</TableCell></TableRow></TableHead>
+        <TableHead><TableRow><TableCell>Station</TableCell><TableCell align="right">Radius</TableCell><TableCell align="right">PM2.5</TableCell><TableCell align="right">PM10</TableCell><TableCell align="right">AQI (calc.)</TableCell></TableRow></TableHead>
         <TableBody>
           {list.map((n) => (
-            <TableRow key={n.id}><TableCell>{n.name}</TableCell><TableCell align="right">{fmtNum(n.distanceKm)}</TableCell>
+            <TableRow key={n.id}><TableCell>{n.name}</TableCell><TableCell align="right">{radiusLabel(n.distanceKm)}</TableCell>
               <TableCell align="right">{fmtGov(n.pm25, 0)}</TableCell><TableCell align="right">{fmtGov(n.pm10, 0)}</TableCell><TableCell align="right">{fmtGov(n.calculatedAqi, 0)}</TableCell></TableRow>
           ))}
         </TableBody>
@@ -187,16 +195,22 @@ function CompareTable({ cmp }: { cmp: GovDeviceComparison }) {
             <TableCell align="right">Difference</TableCell><TableCell align="right">% diff.</TableCell><TableCell>Unit / note</TableCell>
           </TableRow></TableHead>
           <TableBody>
-            {cmp.rows.map((r) => (
+            {cmp.rows.map((r) => {
+              const gas = isGas(r.parameter);                                           // NO₂, SO₂, CO: both sides in ppm
+              const gov = govDisplay(r.parameter, r.government, /^CO/.test(r.parameter) ? 'mg/m³' : 'µg/m³');
+              const unit = gas ? 'ppm' : r.unit;
+              const note = gas ? 'Both sides in ppm. The device value is an uncalibrated sensor reading, so no difference is calculated.' : r.note;
+              return (
               <TableRow key={r.parameter} hover>
                 <TableCell sx={{ fontWeight: 600 }}>{r.parameter}</TableCell>
-                <TableCell align="right">{fmtNum(r.device, r.parameter.startsWith('NO') || r.parameter.startsWith('SO') ? 3 : 1)}</TableCell>
-                <TableCell align="right">{fmtGov(r.government, 1)}</TableCell>
+                <TableCell align="right">{fmtNum(r.device, r.parameter.startsWith('NO') || r.parameter.startsWith('SO') ? 3 : r.parameter === 'CO' ? 2 : 1)}</TableCell>
+                <TableCell align="right">{gas ? fmtDisplay(gov) : fmtGov(r.government, 1)}</TableCell>
                 <TableCell align="right" sx={{ color: r.comparable ? 'text.primary' : 'text.disabled' }}>{r.comparable ? fmtNum(r.difference, 1) : r.government == null ? NOT_AVAILABLE : 'n/a'}</TableCell>
                 <TableCell align="right" sx={{ color: r.comparable ? 'text.primary' : 'text.disabled' }}>{r.comparable && r.percentDifference != null ? `${fmtNum(r.percentDifference, 1)}%` : r.government == null ? NOT_AVAILABLE : 'n/a'}</TableCell>
-                <TableCell><Typography variant="caption" color="text.secondary">{r.unit}{r.note ? ` · ${r.note}` : ''}</Typography></TableCell>
+                <TableCell><Typography variant="caption" color="text.secondary">{unit}{note ? ` · ${note}` : ''}</Typography></TableCell>
               </TableRow>
-            ))}
+              );
+            })}
           </TableBody>
         </Table>
       </TableContainer>
