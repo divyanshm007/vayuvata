@@ -25,6 +25,21 @@ describe('PDF export of readings', () => {
     expect((text.match(/\/Type \/Page\b/g) ?? []).length).toBeGreaterThan(2);               // 150 rows do not fit on one page
   });
 
+  it('builds a dynamic report: several devices, one reading, no readings and identical times do not break it', async () => {
+    const pages = async (rows: SensorDataDto[], inner = false) => (await buildReadingsPdf(rows, { title: 'T', inner })).getNumberOfPages();
+    const multi = [...Array.from({ length: 30 }, (_, i) => reading(i, { recordedAt: `2026-11-12T${String(i % 24).padStart(2, '0')}:00:00Z` })), ...Array.from({ length: 30 }, (_, i) => reading(100 + i, { deviceId: 'Vayu_005', recordedAt: `2026-11-13T${String(i % 24).padStart(2, '0')}:00:00Z` }))];
+    expect(await pages(multi, true)).toBeGreaterThan(3);                                  // cover + a block per device
+    expect(await pages([reading(1)])).toBeGreaterThan(0);
+    expect(await pages([])).toBe(1);
+    expect(await pages(Array.from({ length: 10 }, (_, i) => reading(i)))).toBeGreaterThan(0);   // all at the same time
+  });
+
+  it('buckets many rows into at most 96 chart points', async () => {
+    const { bucketRows } = await import('../utils/reportPdf');
+    const rows = Array.from({ length: 5000 }, (_, i) => reading(i, { recordedAt: `2026-11-12T10:00:00Z` }));
+    expect(bucketRows(rows).length).toBeLessThanOrEqual(96);
+  });
+
   it('file names use the .pdf extension', () => {
     expect(exportFileName(['Vayu_004', '2026-11-01'], 'pdf')).toMatch(/^vayuvata-Vayu_004-2026-11-01-\d{4}-\d{2}-\d{2}\.pdf$/);
   });

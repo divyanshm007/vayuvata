@@ -1,6 +1,7 @@
 import writeXlsxFile from 'write-excel-file';
 import { sensorApi } from '../api/services';
 import type { SensorDataDto, SensorDataQuery } from '../types/api';
+import type { ReportOptions } from './reportPdf';
 
 /** Upper bound of rows in one export (50 requests of 100). The backend caps a page at 100 rows. */
 export const EXPORT_MAX_ROWS = 5000;
@@ -50,37 +51,13 @@ export async function downloadReadingsXlsx(rows: SensorDataDto[], fileName: stri
   await writeXlsxFile(rows, { schema, fileName, headerStyle: { fontWeight: 'bold', backgroundColor: '#E8F3EC' }, stickyRowsCount: 1 } as never);
 }
 
-/**
- * Builds and downloads a PDF table of the readings (A4 landscape, header repeated on every page, page numbers).
- * The PDF library is loaded only when this is called, so it adds nothing to the normal page load.
- * Same columns and wall-clock times as the Excel export; the standard PDF font has no subscripts, so NO2 / SO2 are written plainly.
- */
-export async function buildReadingsPdf(rows: SensorDataDto[], opts: { title: string; subtitle?: string; inner?: boolean }) {
-  const [{ jsPDF }, { default: autoTable }] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
-  const doc = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4', compress: true });
-  doc.setFontSize(14); doc.setTextColor(20);
-  doc.text(opts.title, 40, 36);
-  doc.setFontSize(9); doc.setTextColor(90);
-  doc.text([opts.subtitle ?? '', `${rows.length} reading${rows.length === 1 ? '' : 's'} · generated ${new Date().toLocaleString()}`].filter(Boolean), 40, 52);
-  const n = (v: number | null | undefined, d: number) => (v === null || v === undefined ? '' : v.toFixed(d));
-  autoTable(doc, {
-    startY: opts.subtitle ? 82 : 72,
-    head: [['Device', 'Recorded (IST)', 'AQI', 'AQI status', 'PM2.5 (µg/m³)', 'PM10 (µg/m³)', 'NO2', 'SO2', 'CO (ppm)', 'TVOC (ppb)', opts.inner ? 'Inner temp (°C)' : 'Temp (°C)', 'Humidity (%)', ...(opts.inner ? ['Outer temp (°C)'] : []), 'Outer hum. (%)']],
-    body: rows.map((r) => [r.deviceId, wall(r.recordedAt), n(r.aqi, 0), r.aqiStatus ?? '', n(r.pm25, 1), n(r.pm10, 1), n(r.no2Ppm, 3), n(r.so2Ppm, 3), n(r.coPpm, 2), n(r.tvocPpb, 0), n(r.temperature, 1), n(r.humidity, 1), ...(opts.inner ? [n(r.outerTemperature, 1)] : []), n(r.outerHumidity, 1)]),
-    styles: { fontSize: 7, cellPadding: 3 },
-    headStyles: { fillColor: [22, 101, 52], textColor: 255 },
-    alternateRowStyles: { fillColor: [243, 248, 245] },
-    margin: { left: 40, right: 40, bottom: 30 },
-    didDrawPage: () => {
-      doc.setFontSize(8); doc.setTextColor(120);
-      doc.text(`Page ${doc.getNumberOfPages()}`, doc.internal.pageSize.getWidth() - 40, doc.internal.pageSize.getHeight() - 14, { align: 'right' });
-    },
-  });
-  return doc;
+/** Builds the dynamic air-quality PDF (summary, charts, tables, links) from the filtered rows. See reportPdf.ts. */
+export async function buildReadingsPdf(rows: SensorDataDto[], opts: ReportOptions) {
+  return (await import('./reportPdf')).buildReport(rows, opts);
 }
 
-/** Builds the PDF and starts the download. */
-export async function downloadReadingsPdf(rows: SensorDataDto[], fileName: string, opts: { title: string; subtitle?: string; inner?: boolean }): Promise<void> {
+/** Builds the PDF and starts the download. The PDF library is loaded only when this is called. */
+export async function downloadReadingsPdf(rows: SensorDataDto[], fileName: string, opts: ReportOptions): Promise<void> {
   (await buildReadingsPdf(rows, opts)).save(fileName);
 }
 
