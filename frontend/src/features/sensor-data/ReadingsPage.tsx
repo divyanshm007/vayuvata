@@ -10,7 +10,7 @@ import { downloadReadingsPdf, downloadReadingsXlsx, exportFileName, fetchReading
 import { errorMessage } from '../../utils/errors';
 import { useTempView } from '../../utils/temperature';
 import { fmtNum, fmtWallClock, toApiDateTime, toApiDateTimeEnd } from '../../utils/format';
-import { useAsync } from '../../utils/useAsync';
+import { AUTO_REFRESH_MS, useAsync } from '../../utils/useAsync';
 import { useDevices } from '../devices/useDevices';
 import { HISTORY_PRESETS, RangePicker, presetRange, useRange } from '../analytics/useSeries';
 import { useAuth } from '../auth/AuthContext';
@@ -39,7 +39,7 @@ export default function ReadingsPage() {
   const invalidRange = !!from && !!to && from > to;
   const s = useAsync(
     () => sensorApi.list({ deviceId: deviceId || undefined, from: toApiDateTime(from), to: toApiDateTimeEnd(to), sortBy, sortDir, page, pageSize }),
-    [deviceId, from, to, sortBy, sortDir, page, pageSize], !invalidRange,
+    [deviceId, from, to, sortBy, sortDir, page, pageSize], !invalidRange, AUTO_REFRESH_MS,
   );
   const reset = <T,>(set: (v: T) => void) => (v: T) => { set(v); setPage(1); };
   const sort = (k: Sort) => { if (sortBy === k) setSortDir(sortDir === 'asc' ? 'desc' : 'asc'); else { setSortBy(k); setSortDir('desc'); } setPage(1); };

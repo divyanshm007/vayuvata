@@ -1,7 +1,7 @@
 import { Link as RouterLink } from 'react-router-dom';
 import { Box, Button, Card, CircularProgress, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography } from '@mui/material';
 import { alertsApi } from '../../api/services';
-import { useAsync } from '../../utils/useAsync';
+import { AUTO_REFRESH_MS, useAsync } from '../../utils/useAsync';
 import { fmtUtc } from '../../utils/format';
 import { useAuth } from '../auth/AuthContext';
 import { CATEGORY_LABEL, StatusChip, TYPE_LABEL } from './alertLabels';
@@ -20,8 +20,8 @@ const Tile = ({ label, value, color }: { label: string; value: number | string; 
  */
 export function AlertsPanel() {
   const { role } = useAuth();
-  const summary = useAsync(() => alertsApi.summary(), []);
-  const list = useAsync(() => alertsApi.list({ page: 1, pageSize: 6 }), []);
+  const summary = useAsync(() => alertsApi.summary(), [], true, AUTO_REFRESH_MS);
+  const list = useAsync(() => alertsApi.list({ page: 1, pageSize: 6 }), [], true, AUTO_REFRESH_MS);
   const s = summary.data;
   const items = list.data?.items ?? [];
   return (

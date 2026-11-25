@@ -4,7 +4,7 @@ import { Alert, Box, Card, Grid, LinearProgress, Stack, Table, TableBody, TableC
 import { devicesApi, sensorApi } from '../../api/services';
 import { ActiveChip, AqiBadge, AssignedChip, PageHeader, PaginationBar, ReportingChip } from '../../components/ui';
 import { EmptyState, ErrorState, TableSkeleton } from '../../components/feedback';
-import { useAsync } from '../../utils/useAsync';
+import { AUTO_REFRESH_MS, useAsync } from '../../utils/useAsync';
 import { fmtNum, fmtUtc, fmtWallClock, isRecentlyReporting, toApiDateTime, toApiDateTimeEnd } from '../../utils/format';
 import { useTempView } from '../../utils/temperature';
 import { useAuth } from '../auth/AuthContext';
@@ -24,7 +24,7 @@ export default function DeviceDetailPage() {
   const health = useDeviceHealth();
   const canHistory = role === 'SuperAdmin' || role === 'Admin';
   const dev = useAsync(() => devicesApi.get(id), [id], Number.isFinite(id));
-  const latest = useAsync(() => sensorApi.latest(id), [id], Number.isFinite(id));
+  const latest = useAsync(() => sensorApi.latest(id), [id], Number.isFinite(id), AUTO_REFRESH_MS);
   const [range, setRange] = useRange('7d');
   const series = useSeries(dev.data?.deviceId, range, !!dev.data);
   const data = useMemo(() => toSeries(series.data?.rows ?? []), [series.data]);
@@ -37,7 +37,7 @@ export default function DeviceDetailPage() {
   const [rSize, setRSize] = useState(10);
   const readings = useAsync(
     () => sensorApi.history(id, { from: toApiDateTime(range.from), to: toApiDateTimeEnd(range.to), sortDir: 'desc', page: rPage, pageSize: rSize }),
-    [id, range.from, range.to, rPage, rSize], !!dev.data,
+    [id, range.from, range.to, rPage, rSize], !!dev.data, AUTO_REFRESH_MS,
   );
 
   if (dev.error) return <ErrorState error={dev.error} onRetry={dev.reload} />;

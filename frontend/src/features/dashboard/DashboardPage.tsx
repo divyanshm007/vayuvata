@@ -24,7 +24,7 @@ import { useTempView } from '../../utils/temperature';
 import { RegistrationLinkCard } from '../registration/RegistrationLinkCard';
 import { AlertsPanel } from '../alerts/AlertsPanel';
 import { aqiCategory } from '../../utils/aqi';
-import { useAsync } from '../../utils/useAsync';
+import { AUTO_REFRESH_MS, useAsync } from '../../utils/useAsync';
 import { tokens } from '../../theme/theme';
 import { MetricCard, OpCard, RecentReadings, StatusDonut, WelcomeBanner, deltaVsAverage } from './widgets';
 import { TrendCard } from './TrendCard';
@@ -46,7 +46,7 @@ function useCounts(role: 'SuperAdmin' | 'Admin' | 'User') {
       Object.assign(out, { users, activeUsers });
     }
     return out;
-  }, [role]);
+  }, [role], true, AUTO_REFRESH_MS);
 }
 
 const grid = (cols: Record<string, string>) => ({ display: 'grid', gap: 2, gridTemplateColumns: cols });

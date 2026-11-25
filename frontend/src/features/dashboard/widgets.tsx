@@ -13,7 +13,7 @@ import { aqiCategory } from '../../utils/aqi';
 import { fmtNum, fmtShortTime } from '../../utils/format';
 import { useTempView } from '../../utils/temperature';
 import { sensorApi } from '../../api/services';
-import { useAsync } from '../../utils/useAsync';
+import { AUTO_REFRESH_MS, useAsync } from '../../utils/useAsync';
 import { EmptyState, ErrorState, TableSkeleton } from '../../components/feedback';
 import { Sparkline } from '../analytics/charts';
 
@@ -217,7 +217,7 @@ export function StatusDonut({ total, slices, rows, loading, viewAllTo }: { total
 /** The five most recent readings in the caller's scope (backend-scoped GET /sensor-data). */
 export function RecentReadings() {
   const { isSA, tempShort } = useTempView();
-  const s = useAsync(() => sensorApi.list({ sortBy: 'recordedAt', sortDir: 'desc', page: 1, pageSize: 5, includeTotal: false }), []);
+  const s = useAsync(() => sensorApi.list({ sortBy: 'recordedAt', sortDir: 'desc', page: 1, pageSize: 5, includeTotal: false }), [], true, AUTO_REFRESH_MS);
   return (
     <Card sx={{ p: 2.25 }}>
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>

@@ -5,7 +5,7 @@ import { devicesApi } from '../../api/services';
 import type { DeviceHealth } from '../../types/api';
 import { useAsync } from '../../utils/useAsync';
 
-const REFRESH_MS = 60_000;
+const REFRESH_MS = 120_000;
 
 /** Health of the signed-in user's devices (last hour of readings). Refreshes every minute; a failed refresh keeps the last result. */
 export function useDeviceHealth() {

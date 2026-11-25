@@ -21,7 +21,7 @@ import { ActiveChip, AqiBadge, AssignedChip, PageHeader, PaginationBar, Reportin
 import { ConfirmDialog, EmptyState, ErrorState, TableSkeleton, useToast } from '../../components/feedback';
 import { fmtWallClock, isRecentlyReporting } from '../../utils/format';
 import { errorMessage } from '../../utils/errors';
-import { useAsync, useDebounced } from '../../utils/useAsync';
+import { AUTO_REFRESH_MS, useAsync, useDebounced } from '../../utils/useAsync';
 import { useAuth } from '../auth/AuthContext';
 import { useLatest } from '../sensor-data/useLatest';
 import { useDeviceHealth } from './useDeviceHealth';
@@ -48,7 +48,7 @@ export default function DevicesPage() {
       search: q || undefined, page, pageSize,
       isActive: status === '' ? undefined : status === 'active', assigned: assigned === '' ? undefined : assigned === 'assigned',
     }),
-    [q, status, assigned, page, pageSize],
+    [q, status, assigned, page, pageSize], true, AUTO_REFRESH_MS,
   );
   const latest = useLatest(list.data?.items ?? [], !list.loading);
   const latestFor = (id: number) => latest.items.find((i) => i.device.id === id)?.latest;

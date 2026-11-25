@@ -10,7 +10,7 @@ import { useDevices } from '../devices/useDevices';
 import { DeviceSelect, HISTORY_PRESETS, RangePicker, useRange } from './useSeries';
 import { downloadReadingsPdf, downloadReadingsXlsx, exportFileName, fetchReadingsForExport, EXPORT_MAX_ROWS } from '../../utils/exportExcel';
 import { fmtNum, fmtWallClock, toApiDateTime, toApiDateTimeEnd } from '../../utils/format';
-import { useAsync } from '../../utils/useAsync';
+import { AUTO_REFRESH_MS, useAsync } from '../../utils/useAsync';
 import { errorMessage } from '../../utils/errors';
 import { MEASURES } from '../sensor-data/ReadingParts';
 import { useTempView } from '../../utils/temperature';
@@ -37,7 +37,7 @@ export default function ReportsPage() {
 
   const s = useAsync(
     () => sensorApi.history(device!.id, { from: toApiDateTime(range.from), to: toApiDateTimeEnd(range.to), sortDir: 'desc', page, pageSize }),
-    [device?.id, range.from, range.to, page, pageSize], !!device && !invalid,
+    [device?.id, range.from, range.to, page, pageSize], !!device && !invalid, AUTO_REFRESH_MS,
   );
 
   const runExport = async (kind: 'csv' | 'xlsx' | 'pdf') => {

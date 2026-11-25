@@ -3,7 +3,7 @@ import { Stack, TextField, ToggleButton, ToggleButtonGroup, MenuItem } from '@mu
 import { sensorApi } from '../../api/services';
 import type { DeviceDto, SensorDataDto } from '../../types/api';
 import { toApiDateTime, toApiDateTimeEnd } from '../../utils/format';
-import { useAsync } from '../../utils/useAsync';
+import { AUTO_REFRESH_MS, useAsync } from '../../utils/useAsync';
 
 export const MAX_POINTS_PER_PAGE = 100;
 export const MAX_PAGES = 3; // never pull unbounded history into the browser
@@ -87,7 +87,7 @@ export async function fetchSeries(deviceId: string | undefined, range: Range): P
 
 export function useSeries(deviceId: string | undefined, range: Range, enabled = true) {
   const key = `${deviceId ?? ''}|${range.from}|${range.to}`;
-  const state = useAsync(() => fetchSeries(deviceId, range), [key], enabled);
+  const state = useAsync(() => fetchSeries(deviceId, range), [key], enabled, AUTO_REFRESH_MS);
   return state;
 }
 

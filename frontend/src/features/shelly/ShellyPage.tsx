@@ -12,7 +12,7 @@ import PowerSettingsNew from '@mui/icons-material/PowerSettingsNew';
 import { PageHeader } from '../../components/ui';
 import { ConfirmDialog, EmptyState, ErrorState, useToast } from '../../components/feedback';
 import { shellyApi } from '../../api/services';
-import { useAsync } from '../../utils/useAsync';
+import { AUTO_REFRESH_MS, useAsync } from '../../utils/useAsync';
 import { toAppError } from '../../utils/errors';
 import { fmtNum, fmtUtc } from '../../utils/format';
 import { useAuth } from '../auth/AuthContext';
@@ -243,7 +243,7 @@ function EditDialog({ open, sw, onClose, onSaved }: { open: boolean; sw: ShellyD
 export default function ShellyPage() {
   const { role } = useAuth();
   const isSA = role === 'SuperAdmin';
-  const list = useAsync(() => shellyApi.list(), []);
+  const list = useAsync(() => shellyApi.list(), [], true, AUTO_REFRESH_MS);
   const [editing, setEditing] = useState<ShellyDevice | null>(null);
   const [adding, setAdding] = useState(false);
   const [history, setHistory] = useState<ShellyDevice | null>(null);

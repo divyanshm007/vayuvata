@@ -10,7 +10,7 @@ import Sync from '@mui/icons-material/Sync';
 import { PageHeader } from '../../components/ui';
 import { ErrorState } from '../../components/feedback';
 import { governmentApi } from '../../api/services';
-import { useAsync } from '../../utils/useAsync';
+import { AUTO_REFRESH_MS, useAsync } from '../../utils/useAsync';
 import { useAuth } from '../auth/AuthContext';
 import { MAP_ATTRIBUTION, MAP_MAX_ZOOM, MAP_TILE_URL } from '../../config/mapTiles';
 import { fmtGov, fmtNum, fmtWallClock, NOT_AVAILABLE } from '../../utils/format';
@@ -222,9 +222,9 @@ const RADIUS_OPTIONS = [1, 5, 10, 25, 50];
 
 export default function GovComparisonPage() {
   const { role } = useAuth();
-  const status = useAsync(() => governmentApi.status(), []);
+  const status = useAsync(() => governmentApi.status(), [], true, AUTO_REFRESH_MS);
   const [radiusKm, setRadiusKm] = useState(25);
-  const cmps = useAsync(() => governmentApi.comparison(radiusKm), [radiusKm]);
+  const cmps = useAsync(() => governmentApi.comparison(radiusKm), [radiusKm], true, AUTO_REFRESH_MS);
   const [deviceId, setDeviceId] = useState<string>('');
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState<{ ok: boolean; text: string } | null>(null);

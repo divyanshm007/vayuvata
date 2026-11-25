@@ -3,7 +3,7 @@ import { Alert, Box, Button, Card, CircularProgress, MenuItem, Stack, Tab, Table
 import { PageHeader, PaginationBar } from '../../components/ui';
 import { EmptyState, ErrorState, useToast } from '../../components/feedback';
 import { alertsApi } from '../../api/services';
-import { useAsync } from '../../utils/useAsync';
+import { AUTO_REFRESH_MS, useAsync } from '../../utils/useAsync';
 import { toAppError } from '../../utils/errors';
 import { fmtUtc } from '../../utils/format';
 import { useAuth } from '../auth/AuthContext';
@@ -28,7 +28,7 @@ function Filters({ category, setCategory, status, setStatus, statuses }: { categ
 function ActiveTab() {
   const [category, setCategory] = useState(''); const [status, setStatus] = useState('');
   const [page, setPage] = useState(1); const [pageSize, setPageSize] = useState(20);
-  const list = useAsync(() => alertsApi.list({ category: category || undefined, status: status || undefined, page, pageSize }), [category, status, page, pageSize]);
+  const list = useAsync(() => alertsApi.list({ category: category || undefined, status: status || undefined, page, pageSize }), [category, status, page, pageSize], true, AUTO_REFRESH_MS);
   return (
     <>
       <Filters category={category} setCategory={(v) => { setCategory(v); setPage(1); }} status={status} setStatus={(v) => { setStatus(v); setPage(1); }} statuses={['Warning', 'Critical', 'Resolved']} />
@@ -63,7 +63,7 @@ function MaintCell({ item, deviceId, label, onDone }: { item: MaintenanceItem; d
 
 function MaintenanceTab() {
   const toast = useToast();
-  const m = useAsync(() => alertsApi.maintenance(), []);
+  const m = useAsync(() => alertsApi.maintenance(), [], true, AUTO_REFRESH_MS);
   const [err, setErr] = useState<string | null>(null);
   const done = async (deviceId: string, type: MaintenanceItem['alertType']) => {
     setErr(null);
