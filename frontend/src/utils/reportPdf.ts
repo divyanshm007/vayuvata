@@ -4,11 +4,11 @@ import type { SensorDataDto } from '../types/api';
 /**
  * Dynamic air-quality PDF built from whatever rows the current filters selected.
  * Summary tiles, vector charts (stay sharp when zoomed), a pollutant table, time per AQI category and a sampled readings table,
- * plus what a PDF can really do: clickable contents, bookmarks and links to the live panel.
+ * plus what a PDF can really do: clickable contents and bookmarks.
  * The standard PDF font has no subscripts, so NO2 / SO2 are written plainly.
  */
 type RGB = [number, number, number];
-export interface ReportOptions { title: string; subtitle?: string; inner?: boolean; panelUrl?: string }
+export interface ReportOptions { title: string; subtitle?: string; inner?: boolean }
 
 /** India AQI categories. */
 export const AQI_BANDS: Array<[number, number, RGB, string]> = [
@@ -57,7 +57,6 @@ export async function buildReport(rows: SensorDataDto[], opts: ReportOptions): P
   const [{ jsPDF: PDF }, { default: autoTable }] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
   const doc = new PDF({ unit: 'pt', format: 'a4', compress: true });
   const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 40;
-  const panel = (opts.panelUrl ?? (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/$/, '');
   const finalY = () => (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY;
   const tableLook = { margin: { left: M, right: M, top: 70, bottom: 40 }, headStyles: { fillColor: GREEN }, alternateRowStyles: { fillColor: [243, 248, 245] as RGB }, didDrawPage: () => pageHeader() };
 
@@ -74,7 +73,6 @@ export async function buildReport(rows: SensorDataDto[], opts: ReportOptions): P
     doc.setDrawColor(...GREEN); doc.setLineWidth(0.6); doc.line(M, y + 5, W - M, y + 5); doc.setTextColor(30); doc.setFont('helvetica', 'normal');
     return y + 22;
   };
-  const link = (text: string, x: number, y: number, url: string) => { if (!panel) return; doc.setTextColor(...LINK); doc.setFontSize(10); doc.textWithLink(text, x, y, { url }); doc.setTextColor(30); };
 
   function lineChart(x: number, y: number, w: number, h: number, title: string, data: Point[], key: string, color: RGB, bands: boolean, second?: { key: string; color: RGB; label: string; first: string }) {
     doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(30); doc.text(title, x, y - 6);
@@ -191,8 +189,7 @@ export async function buildReport(rows: SensorDataDto[], opts: ReportOptions): P
       doc.setFontSize(10);
       toc.forEach(([label, pg], i) => { doc.setTextColor(...LINK); doc.text(label, M + 4, y + i * 15); doc.text(`page ${pg}`, W - M, y + i * 15, { align: 'right' }); doc.link(M, y + i * 15 - 10, W - 2 * M, 14, { pageNumber: pg }); });
       y += toc.length * 15;
-      if (panel) link('Open this device in the live panel', M + 4, y + 6, `${panel}/devices`);
-      y += 28;
+      y += 22;
     }
 
     y = section('Charts: AQI and particles', y);
@@ -254,8 +251,7 @@ export async function buildReport(rows: SensorDataDto[], opts: ReportOptions): P
   doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(50);
   const notes = doc.splitTextToSize('This report was built from the readings that match the filters you chose, so it changes with them. Charts are vector graphics: zoom in as far as you like. The bookmarks panel (left side of your PDF viewer) and the contents links jump between sections. AQI is calculated from PM2.5 and PM10 with the CPCB formula. Gases are shown in ppm and TVOC in ppb; the device values are uncalibrated sensor readings. Use the Excel export for every individual reading.', W - 2 * M);
   doc.text(notes, M, y);
-  y += notes.length * 12 + 12;
-  link('Open Sensor Readings', M, y, `${panel}/readings`); link('Open the Alerts page', M + 150, y, `${panel}/alerts`);
+
   doc.outline.add(null, 'About this report', { pageNumber: doc.getCurrentPageInfo().pageNumber });
 
   // cover-page rows jump to their device
